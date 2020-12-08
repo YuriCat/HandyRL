@@ -168,7 +168,7 @@ def forward_prediction(model, hidden, batch, obs_mode):
     return t_policies, t_values
 
 
-def compose_losses(policies, values, log_selected_policies, advantages, value_targets, tmasks, vmasks, progress, entropy_regularization):
+def compose_losses(policies, values, selected_policies, log_selected_policies, advantages, value_targets, tmasks, vmasks, progress, entropy_regularization):
     """Caluculate loss value
 
     Returns:
@@ -180,13 +180,13 @@ def compose_losses(policies, values, log_selected_policies, advantages, value_ta
 
     turn_advantages = advantages.mul(tmasks).sum(-1, keepdim=True)
 
-    losses['p'] = (-log_selected_policies * turn_advantages).sum()
+    losses['q'] = ((turn_advantages - selected_policies) ** 2).mul(vmasks).sum() / 2
     losses['v'] = ((values - value_targets) ** 2).mul(vmasks).sum() / 2
 
     entropy = dist.Categorical(logits=policies).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
-    loss_base = losses['p'] + losses['v']
+    loss_base = losses['q'] + losses['v']
     losses['total'] = loss_base + entropy.mul(1 - progress * 0.9).sum() * -entropy_regularization
 
     return losses, dcnt
@@ -200,6 +200,7 @@ def vtrace_base(batch, model, hidden, args):
 
     log_selected_b_policies = F.log_softmax(batch['policy'], dim=-1).gather(-1, actions) * gmasks
     log_selected_t_policies = F.log_softmax(t_policies     , dim=-1).gather(-1, actions) * gmasks
+    selected_t_policies = t_policies.gather(-1, actions) * gmasks
 
     # thresholds of importance sampling
     log_rhos = log_selected_t_policies.detach() - log_selected_b_policies
@@ -217,14 +218,14 @@ def vtrace_base(batch, model, hidden, args):
 
     values_nograd = values_nograd * gmasks + batch['return'] * (1 - gmasks)
 
-    return t_policies, t_values, log_selected_t_policies, values_nograd, clipped_rhos, cs
+    return t_policies, t_values, selected_t_policies, log_selected_t_policies, values_nograd, clipped_rhos, cs
 
 
 def vtrace(batch, model, hidden, args):
     # IMPALA
     # https://github.com/deepmind/scalable_agent/blob/master/vtrace.py
 
-    t_policies, t_values, log_selected_t_policies, values_nograd, clipped_rhos, cs = vtrace_base(batch, model, hidden, args)
+    t_policies, t_values, selected_t_policies, log_selected_t_policies, values_nograd, clipped_rhos, cs = vtrace_base(batch, model, hidden, args)
     returns = batch['return']
     time_length = batch['vmask'].size(0)
 
@@ -255,10 +256,11 @@ def vtrace(batch, model, hidden, args):
         lambda_returns = torch.stack(tuple(lambda_returns))
 
         value_targets = lambda_returns
-        advantages = clipped_rhos * (value_targets - values_nograd)
+        #advantages = clipped_rhos * (value_targets - values_nograd)
+        advantages = value_targets - values_nograd
 
     return compose_losses(
-        t_policies, t_values, log_selected_t_policies, advantages, value_targets,
+        t_policies, t_values, selected_t_policies, log_selected_t_policies, advantages, value_targets,
         batch['tmask'], batch['vmask'], batch['progress'], args['entropy_regularization'],
     )
 
