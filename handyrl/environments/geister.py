@@ -50,7 +50,7 @@ class GeisterNet(BaseModel):
         return h_p, torch.tanh(h_v), h_r, hidden
 
 
-class Environment(BaseEnvironment):
+class Geister(BaseEnvironment):
     X, Y = 'ABCDEF', '123456'
     BLACK, WHITE = 0, 1
     BLUE, RED = 0, 1

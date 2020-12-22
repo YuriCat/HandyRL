@@ -11,7 +11,7 @@ import numpy as np
 from ..environment import BaseEnvironment
 
 
-class Environment(BaseEnvironment):
+class TicTacToe(BaseEnvironment):
     X, Y = 'ABC',  '123'
     BLACK, WHITE = 1, -1
     C = {0: '_', BLACK: 'O', WHITE: 'X'}

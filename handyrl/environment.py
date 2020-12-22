@@ -27,7 +27,8 @@ def make_env(env_args):
     if env_module is None:
         print("No environment %s" % env_name)
     else:
-        return env_module.Environment(env_args)
+        env_class = getattr(env_module, env_name)
+        return env_class(env_args)
 
 
 # base class of Environment
