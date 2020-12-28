@@ -3,6 +3,7 @@
 
 import sys
 import yaml
+import multiprocessing as mp
 
 from handyrl.train import train_main, train_server_main
 from handyrl.worker import worker_main
@@ -10,6 +11,8 @@ from handyrl.evaluation import eval_main, eval_server_main, eval_client_main
 
 
 if __name__ == '__main__':
+    mp.set_start_method('forkserver')
+
     with open('config.yaml') as f:
         args = yaml.safe_load(f)
     print(args)
