@@ -20,7 +20,7 @@ class Environment(BaseEnvironment):
         super().__init__()
         self.reset()
 
-    def reset(self, args=None):
+    def reset(self, args={}):
         self.board = np.zeros((3, 3))  # (x, y)
         self.color = self.BLACK
         self.win_color = 0

@@ -75,8 +75,9 @@ class Environment(BaseEnvironment):
         super().__init__()
         self.reset()
 
-    def reset(self, args=None):
-        self.args = args if args is not None else {'B': -1, 'W': -1}
+    def reset(self, args={}):
+        self.args = {'B': -1, 'W': -1}
+        self.args.update(args)
 
         self.board = -np.ones((6, 6), dtype=np.int32)  # (x, y) -1 is empty
         self.color = self.BLACK

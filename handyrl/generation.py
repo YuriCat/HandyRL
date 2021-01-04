@@ -24,7 +24,7 @@ class Generator:
         for player in self.env.players():
             hidden[player] = models[player].init_hidden()
 
-        err = self.env.reset()
+        err = self.env.reset(args)
         if err:
             return None
 

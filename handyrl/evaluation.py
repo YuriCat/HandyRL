@@ -231,7 +231,7 @@ class Evaluator:
                 agents[p] = self.default_agent
             else:
                 agents[p] = Agent(model, self.args['observation'])
-        outcome = exec_match(self.env, agents, None)
+        outcome = exec_match(self.env, agents, None, game_args=args)
         if outcome is None:
             print('None episode in evaluation!')
             return None
