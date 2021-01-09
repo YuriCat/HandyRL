@@ -9,6 +9,7 @@ import pickle
 
 import numpy as np
 
+from .util import map_r
 from .model import softmax
 
 
@@ -35,7 +36,7 @@ class Generator:
             if self.env.terminal():
                 break
 
-            moment = {'observation': {}, 'value': {}, 'reward': {}, 'return': {}}
+            moment = {'observation': {}, 'hidden': {}, 'value': {}, 'reward': {}, 'return': {}}
 
             for index, player in enumerate(self.env.players()):
                 obs, v = None, None
@@ -50,6 +51,7 @@ class Generator:
                         p_turn = p - pmask
                         index_turn = index
                 moment['observation'][index] = obs
+                moment['hidden'][index] = map_r(hidden[player], lambda h: h.astype(np.float16) if h is not None else h)
                 moment['value'][index] = v
 
             action = random.choices(legal_actions, weights=softmax(p_turn[legal_actions]))[0]

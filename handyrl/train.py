@@ -48,7 +48,11 @@ def make_batch(episodes, args):
         (T is time length, B is batch size, P is player count)
     """
 
-    obss, datum = [], []
+    datum, obss, hiddens = [], [], []
+    hidden_zeros = args['hidden']
+
+    def replace_none(x, defalut_value):
+        return x if x is not None else defalut_value
 
     for ep in episodes:
         # target player and turn index
@@ -59,12 +63,19 @@ def make_batch(episodes, args):
         obs_zeros = map_r(moments[0]['observation'][moments[0]['turn']], lambda o: np.zeros_like(o))  # template for padding
         if args['observation']:
             # replace None with zeros
-            obs = [[(lambda x: (x if x is not None else obs_zeros))(m['observation'][pl]) for pl in players] for m in moments]
+            obs = [[replace_none(m['observation'][pl], obs_zeros) for pl in players] for m in moments]
         else:
             obs = [[m['observation'][m['turn']]] for m in moments]
         obs = rotate(obs)  # (T, P, ..., ...) -> (P, ..., T, ...)
         obs = rotate(obs)  # (T, ..., P, ...) -> (..., P, T, ...)
         obs = bimap_r(obs_zeros, obs, lambda _, o: np.array(o))
+
+        if hidden_zeros is not None:
+            hidden = [replace_none(moments[0]['hidden'][pl], hidden_zeros) for pl in players]
+            hidden = rotate(hidden)  # (P, ..., ...) -> (..., P, ...)
+            hidden = bimap_r(hidden_zeros, hidden, lambda _, h: np.array(h))
+        else:
+            hidden = None
 
         # datum that is not changed by training configuration
         v = np.array(
@@ -103,11 +114,13 @@ def make_batch(episodes, args):
             progress = np.pad(progress, [(0, pad_len)], 'constant', constant_values=1)
 
         obss.append(obs)
+        hiddens.append(hidden)
         datum.append((tmsk, pmsk, vmsk, act, p, v, rew, ret, oc, progress))
 
     tmsk, pmsk, vmsk, act, p, v, rew, ret, oc, progress = zip(*datum)
 
     obs = to_torch(bimap_r(obs_zeros, rotate(obss), lambda _, o: np.array(o)))
+    hidden = to_torch(bimap_r(hidden_zeros, rotate(hiddens), lambda _, h: np.array(h))) if hiddens[0] is not None else None
     tmsk = to_torch(np.array(tmsk))
     pmsk = to_torch(np.array(pmsk))
     vmsk = to_torch(np.array(vmsk))
@@ -120,7 +133,8 @@ def make_batch(episodes, args):
     progress = to_torch(np.array(progress))
 
     return {
-        'observation': obs, 'tmask': tmsk, 'pmask': pmsk, 'vmask': vmsk,
+        'observation': obs, 'hidden': hidden,
+        'tmask': tmsk, 'pmask': pmsk, 'vmask': vmsk,
         'action': act, 'policy': p, 'value': v,
         'reward': rew, 'return': ret, 'outcome': oc,
         'progress': progress,
@@ -411,10 +425,12 @@ class Trainer:
         self.optimizer = optim.Adam(self.params, lr=lr, weight_decay=1e-5) if len(self.params) > 0 else None
         self.steps = 0
         self.lock = threading.Lock()
-        self.batcher = Batcher(self.args, self.episodes)
         self.updated_model = None, 0
         self.update_flag = False
         self.shutdown_flag = False
+
+        self.args['hidden'] = self.model.init_hidden()
+        self.batcher = Batcher(self.args, self.episodes)
 
     def update(self):
         if len(self.episodes) < self.args['minimum_episodes']:
@@ -461,7 +477,7 @@ class Trainer:
             batch = to_gpu_or_not(self.batcher.batch(), self.gpu)
             batch_size = batch['value'].size(0)
             player_count = batch['value'].size(2)
-            hidden = to_gpu_or_not(self.model.init_hidden([batch_size, player_count]), self.gpu)
+            hidden = to_gpu_or_not(batch['hidden'], self.gpu)
 
             losses, dcnt = vtrace(batch, train_model, hidden, self.args)
 
