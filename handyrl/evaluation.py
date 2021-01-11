@@ -79,7 +79,7 @@ class Agent:
         self.hidden = self.planner.init_hidden()
 
     def action(self, env, player, show=False):
-        p, v, _, self.hidden = self.planner.inference(env.observation(player), self.hidden)
+        p, v, _, _, self.hidden = self.planner.inference(env.observation(player), self.hidden)
         actions = env.legal_actions()
         if show:
             view(env, player=player)

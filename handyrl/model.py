@@ -251,7 +251,7 @@ class BaseModel(nn.Module):
 
 class RandomModel(BaseModel):
     def inference(self, x=None, hidden=None):
-        return np.zeros(self.action_length), np.zeros(1), None, None
+        return np.zeros(self.action_length), np.zeros(1), None, None, None
 
 
 class DuelingNet(BaseModel):

@@ -9,6 +9,7 @@ import itertools
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from ..environment import BaseEnvironment
 from ..model import BaseModel, Encoder, Head, DRC, Conv
@@ -30,6 +31,7 @@ class GeisterNet(BaseModel):
         self.head_p2 = Conv(p_filters, 4, 1, bn=False, bias=False)
         self.head_v = Head((filters * 2, 6, 6), 1, 1)
         self.head_r = Head((filters * 2, 6, 6), 1, 1)
+        self.head_imp = Head((filters * 2, 6, 6), 4, 70)
 
     def init_hidden(self, batch_size=None):
         return self.body.init_hidden(self.input_size[1:], batch_size)
@@ -46,8 +48,9 @@ class GeisterNet(BaseModel):
         h_p = self.head_p2(h_p).view(*h.size()[:-3], 4 * 6 * 6)
         h_v = self.head_v(h)
         h_r = self.head_r(h)
+        h_imp = self.head_imp(h)
 
-        return h_p, torch.tanh(h_v), h_r, hidden
+        return h_p, torch.tanh(h_v), h_r, F.softmax(h_imp, -1), hidden
 
 
 class Environment(BaseEnvironment):
@@ -88,6 +91,8 @@ class Environment(BaseEnvironment):
         self.record = []
 
         b_pos, w_pos = self.args.get('B', -1), self.args.get('W', -1)
+        self.b_pos = b_pos
+        self.w_pos = w_pos
         self.set_pieces(self.BLACK, b_pos if b_pos >= 0 else random.randrange(70))
         self.set_pieces(self.WHITE, w_pos if w_pos >= 0 else random.randrange(70))
 
@@ -399,6 +404,15 @@ class Environment(BaseEnvironment):
             b = np.rot90(b, k=2, axes=(1, 2))
 
         return {'scalar': s, 'board': b}
+
+    def imperfect(self):
+        #color = player
+        #opponent = self.opponent(color)
+        #blue_o = self.board == self.colortype2piece(opponent, self.BLUE)
+        #red_o  = self.board == self.colortype2piece(opponent, self.RED)
+        #b = np.stack([blue_o, red_o]).astype(np.float32)
+        #return b
+        return {p: np.eye(70)[[self.b_pos, self.w_pos][idx]] for idx, p in enumerate(self.players())}
 
     def net(self):
         return GeisterNet

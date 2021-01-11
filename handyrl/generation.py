@@ -35,14 +35,16 @@ class Generator:
             if self.env.terminal():
                 break
 
-            moment = {'observation': {}, 'value': {}, 'reward': {}, 'return': {}}
+            moment = {'observation': {}, 'value': {}, 'reward': {}, 'return': {}}#, 'imperfect': {}}
 
             for index, player in enumerate(self.env.players()):
                 obs, v = None, None
+                imp = None
                 if player == self.env.turn() or self.args['observation']:
                     obs = self.env.observation(player)
+                    #imp = self.env.imperfect(player)
                     model = models[player]
-                    p, v, _, hidden[player] = model.inference(obs, hidden[player])
+                    p, v, _, _, hidden[player] = model.inference(obs, hidden[player])
                     if player == self.env.turn():
                         legal_actions = self.env.legal_actions()
                         pmask = np.ones_like(p) * 1e32
@@ -51,6 +53,7 @@ class Generator:
                         index_turn = index
                 moment['observation'][index] = obs
                 moment['value'][index] = v
+                #moment['imperfect'][index] = imp
 
             action = random.choices(legal_actions, weights=softmax(p_turn[legal_actions]))[0]
 
@@ -80,8 +83,13 @@ class Generator:
         outcomes = self.env.outcome()
         outcomes = {index: outcomes[player] for index, player in enumerate(self.env.players())}
 
+        imperfects = self.env.imperfect()
+        imperfects = {index: imperfects[player] for index, player in enumerate(self.env.players())}
+
         episode = {
-            'args': args, 'steps': len(moments), 'outcome': outcomes,
+            'args': args, 'steps': len(moments),
+            'outcome': outcomes,
+            'imperfect': imperfects,
             'moment': [
                 bz2.compress(pickle.dumps(moments[i:i+self.args['compress_steps']]))
                 for i in range(0, len(moments), self.args['compress_steps'])

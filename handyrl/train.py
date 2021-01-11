@@ -48,7 +48,7 @@ def make_batch(episodes, args):
         (T is time length, B is batch size, P is player count)
     """
 
-    obss, datum = [], []
+    datum, obss, imps = [], [], []
 
     for ep in episodes:
         # target player and turn index
@@ -65,6 +65,12 @@ def make_batch(episodes, args):
         obs = rotate(obs)  # (T, P, ..., ...) -> (P, ..., T, ...)
         obs = rotate(obs)  # (T, ..., P, ...) -> (..., P, T, ...)
         obs = bimap_r(obs_zeros, obs, lambda _, o: np.array(o))
+
+        #imp_zeros = map_r(m[0]['imperfect'][0], lambda i: np.zeros_like(i))
+        #imp = [[m['imperfect'] for pl in players] for m in moments]
+        #imp = rotate(rotate(imp))  # (T, P, ..., ...) -> (..., T, P, ...)
+        #imp = bimap_r(imp_zeros, imp, lambda _, i: np.array(i))
+        imp = [ep['imperfect'][1 - pl] for pl in players]
 
         # datum that is not changed by training configuration
         v = np.array(
@@ -83,6 +89,7 @@ def make_batch(episodes, args):
         tmsk = np.eye(len(players))[[m['turn'] for m in moments]]
         pmsk = np.array([m['pmask'] for m in moments])
         vmsk = np.ones_like(tmsk) if args['observation'] else tmsk
+        omsk = np.copy(vmsk)
 
         act = np.array([m['action'] for m in moments]).reshape(-1, 1)
         p = np.array([m['policy'] for m in moments])
@@ -92,25 +99,31 @@ def make_batch(episodes, args):
         if len(tmsk) < args['forward_steps']:
             pad_len = args['forward_steps'] - len(tmsk)
             obs = map_r(obs, lambda o: np.pad(o, [(0, pad_len)] + [(0, 0)] * (len(o.shape) - 1), 'constant', constant_values=0))
+            #imp = map_r(imp, lambda i: np.pad(i, [(0, pad_len)] + [(0, 0)] * (len(i.shape) - 1), 'constant', constant_values=0))
             v = np.concatenate([v, np.tile(oc, [pad_len, 1])])
             rew = np.pad(rew, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
             ret = np.pad(ret, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
             tmsk = np.pad(tmsk, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
             pmsk = np.pad(pmsk, [(0, pad_len), (0, 0)], 'constant', constant_values=1e32)
             vmsk = np.pad(vmsk, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
+            omsk = np.pad(omsk, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
             act = np.pad(act, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
             p = np.pad(p, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
             progress = np.pad(progress, [(0, pad_len)], 'constant', constant_values=1)
 
         obss.append(obs)
-        datum.append((tmsk, pmsk, vmsk, act, p, v, rew, ret, oc, progress))
+        imps.append(imp)
+        datum.append((tmsk, pmsk, vmsk, omsk, act, p, v, rew, ret, oc, progress))
 
-    tmsk, pmsk, vmsk, act, p, v, rew, ret, oc, progress = zip(*datum)
+    tmsk, pmsk, vmsk, omsk, act, p, v, rew, ret, oc, progress = zip(*datum)
 
     obs = to_torch(bimap_r(obs_zeros, rotate(obss), lambda _, o: np.array(o)))
+    #imp = to_torch(bimap_r(imp_zeros, rotate(imps), lambda _, i: np.array(i)))
+    imp = to_torch(np.array(imps))
     tmsk = to_torch(np.array(tmsk))
     pmsk = to_torch(np.array(pmsk))
     vmsk = to_torch(np.array(vmsk))
+    omsk = to_torch(np.array(omsk))
     act = to_torch(np.array(act))
     p = to_torch(np.array(p))
     v = to_torch(np.array(v))
@@ -120,7 +133,8 @@ def make_batch(episodes, args):
     progress = to_torch(np.array(progress))
 
     return {
-        'observation': obs, 'tmask': tmsk, 'pmask': pmsk, 'vmask': vmsk,
+        'observation': obs, 'imperfect': imp,
+        'tmask': tmsk, 'pmask': pmsk, 'vmask': vmsk, 'omask': omsk,
         'action': act, 'policy': p, 'value': v,
         'reward': rew, 'return': ret, 'outcome': oc,
         'progress': progress,
@@ -150,6 +164,7 @@ def forward_prediction(model, hidden, batch, obs_mode):
         bmasks = torch.clamp(batch['tmask'] + batch['vmask'], 0, 1)  # (B, T, P)
 
         t_policies, t_values, t_returns = [], [], []
+        t_imperfects = []
         for t in range(batch['tmask'].size(1)):
             obs = map_r(observations, lambda o: o[:, t].reshape(-1, *o.size()[3:]))  # (..., B * P, ...)
             bmask_ = bmasks[:, t]
@@ -159,15 +174,17 @@ def forward_prediction(model, hidden, batch, obs_mode):
                 hidden_ = map_r(hidden_, lambda h: h.view(-1, *h.size()[2:]))  # (..., B * P, ...)
             else:
                 hidden_ = map_r(hidden_, lambda h: h.sum(1))  # (..., B * 1, ...)
-            t_policy, t_value, t_return, next_hidden = model(obs, hidden_)
+            t_policy, t_value, t_return, t_imperfect, next_hidden = model(obs, hidden_)
             t_policies.append(t_policy)
             t_values.append(t_value)
             t_returns.append(t_return)
+            t_imperfects.append(t_imperfect)
             next_hidden = bimap_r(next_hidden, hidden, lambda nh, h: nh.view(h.size(0), -1, *h.size()[2:]))  # (..., B, P or 1, ...)
             hidden = trimap_r(hidden, next_hidden, bmask, lambda h, nh, m: h * (1 - m) + nh * m)
         t_policies = torch.stack(t_policies, dim=1)
         t_values = torch.stack(t_values, dim=1) if t_values[0] is not None else None
         t_returns = torch.stack(t_returns, dim=1) if t_returns[0] is not None else None
+        t_imperfects = torch.stack(t_imperfects, dim=1)
 
     # gather turn player's policies
     t_policies = t_policies.view(*batch['tmask'].size()[:2], -1, t_policies.size(-1))
@@ -183,12 +200,15 @@ def forward_prediction(model, hidden, batch, obs_mode):
         t_returns = t_returns.view(*batch['tmask'].size()[:2], -1)
         t_returns = t_returns.mul(batch['vmask'])
 
-    return t_policies, t_values, t_returns
+    t_imperfects = t_imperfects.view(*batch['tmask'].size()[:2], -1, t_imperfects.size(-1))
+    t_imperfects = t_imperfects.mul(batch['omask'].unsqueeze(-1)) + (1 - batch['omask'].unsqueeze(-1))
+
+    return t_policies, t_values, t_returns, t_imperfects
 
 
-def compose_losses(policies, values, returns, log_selected_policies, \
-                   advantages, value_targets, return_targets, \
-                   tmasks, vmasks, progress, args):
+def compose_losses(policies, values, returns, log_selected_policies, imperfects, \
+                   advantages, value_targets, return_targets, imperfect_targets, \
+                   tmasks, vmasks, progress, imperfect_answers, args):
     """Caluculate loss value
 
     Returns:
@@ -205,11 +225,13 @@ def compose_losses(policies, values, returns, log_selected_policies, \
         losses['v'] = ((values - value_targets) ** 2).mul(vmasks).sum() / 2
     if returns is not None:
         losses['r'] = F.smooth_l1_loss(returns, return_targets, reduction='none').mul(vmasks).sum()
+    losses['i'] = (imperfect_targets * (torch.clamp(imperfect_targets, 1e-8, 1) / imperfects).log()).mul(tmasks.unsqueeze(-1)).sum()
+    losses['iacc'] = (torch.argmax(imperfects, dim=-1) == torch.argmax(imperfect_answers, dim=-1).unsqueeze(-2)).mul(tmasks).sum()
 
     entropy = dist.Categorical(logits=policies).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
-    base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
+    base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0) + losses['i']
     entropy_loss = entropy.mul(1 - progress * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
     losses['total'] = base_loss + entropy_loss
 
@@ -217,7 +239,7 @@ def compose_losses(policies, values, returns, log_selected_policies, \
 
 
 def vtrace_base(batch, model, hidden, args):
-    t_policies, t_values, t_returns = forward_prediction(model, hidden, batch, args['observation'])
+    t_policies, t_values, t_returns, t_imperfects = forward_prediction(model, hidden, batch, args['observation'])
     actions = batch['action']
     gmasks = batch['tmask'].sum(-1, keepdim=True)
     clip_rho_threshold, clip_c_threshold = 1.0, 1.0
@@ -232,6 +254,7 @@ def vtrace_base(batch, model, hidden, args):
     cs = torch.clamp(rhos, 0, clip_c_threshold)
     values_nograd = t_values.detach() if t_values is not None else None
     returns_nograd = t_returns.detach() if t_returns is not None else None
+    imperfects_nograd = t_imperfects.detach()
 
     if values_nograd is not None:
         if values_nograd.size(2) == 2:  # two player zerosum game
@@ -245,16 +268,16 @@ def vtrace_base(batch, model, hidden, args):
 
         values_nograd = values_nograd * gmasks + batch['outcome'] * (1 - gmasks)
 
-    return batch, t_policies, t_values, t_returns, log_selected_t_policies, \
-        values_nograd, returns_nograd, clipped_rhos, cs
+    return batch, t_policies, t_values, t_returns, log_selected_t_policies, t_imperfects, \
+        values_nograd, returns_nograd, imperfects_nograd, clipped_rhos, cs
 
 
 def vtrace(batch, model, hidden, args):
     # IMPALA
     # https://github.com/deepmind/scalable_agent/blob/master/vtrace.py
 
-    batch, t_policies, t_values, t_returns, log_selected_t_policies, \
-        values_nograd, returns_nograd, clipped_rhos, cs = \
+    batch, t_policies, t_values, t_returns, log_selected_t_policies, t_imperfects, \
+        values_nograd, returns_nograd, imperfects_nograd, clipped_rhos, cs = \
         vtrace_base(batch, model, hidden, args)
     outcomes, returns, rewards = batch['outcome'], batch['return'], batch['reward']
     time_length = batch['vmask'].size(1)
@@ -332,12 +355,20 @@ def vtrace(batch, model, hidden, args):
             return_targets = None
             return_advantages = 0
 
+        lambda_imperfects = deque([batch['imperfect']])
+        for i in range(time_length - 2, -1, -1):
+            inv_lmb = (1 - lmb) * batch['omask'][:, i + 1].unsqueeze(-1)
+            lambda_imperfects.appendleft(inv_lmb * imperfects_nograd[:, i + 1] + (1 - inv_lmb) * lambda_imperfects[0])
+
+        imperfect_targets = torch.stack(tuple(lambda_imperfects), dim=1)
+
     # compute policy advantage
     advantages = clipped_rhos * (value_advantages + return_advantages)
 
     return compose_losses(
-        t_policies, t_values, t_returns, log_selected_t_policies, advantages, value_targets, return_targets,
-        batch['tmask'], batch['vmask'], batch['progress'], args
+        t_policies, t_values, t_returns, log_selected_t_policies, t_imperfects,
+        advantages, value_targets, return_targets, imperfect_targets,
+        batch['tmask'], batch['vmask'], batch['progress'], batch['imperfect'], args
     )
 
 
@@ -384,6 +415,7 @@ class Batcher:
         ed_block = (ed - 1) // self.args['compress_steps'] + 1
         ep_minimum = {
             'args': ep['args'], 'outcome': ep['outcome'],
+            'imperfect': ep['imperfect'],
             'moment': ep['moment'][st_block:ed_block],
             'base': st_block * self.args['compress_steps'],
             'start': st, 'end': ed, 'total': ep['steps']
