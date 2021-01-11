@@ -91,10 +91,10 @@ class Environment(BaseEnvironment):
         self.record = []
 
         b_pos, w_pos = self.args.get('B', -1), self.args.get('W', -1)
-        self.b_pos = b_pos
-        self.w_pos = w_pos
-        self.set_pieces(self.BLACK, b_pos if b_pos >= 0 else random.randrange(70))
-        self.set_pieces(self.WHITE, w_pos if w_pos >= 0 else random.randrange(70))
+        self.b_pos = b_pos if b_pos >= 0 else random.randrange(70)
+        self.w_pos = w_pos if w_pos >= 0 else random.randrange(70)
+        self.set_pieces(self.BLACK, self.b_pos)
+        self.set_pieces(self.WHITE, self.w_pos)
 
     def put_piece(self, piece, pos, piece_idx):
         self.board[pos[0], pos[1]] = piece
