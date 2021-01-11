@@ -60,12 +60,13 @@ def view_transition(env):
         pass
 
 
-def print_outputs(env, prob, v):
+def print_outputs(env, prob, v, imp):
     if hasattr(env, 'print_outputs'):
         env.print_outputs(prob, v)
     else:
         print('v = %f' % v)
         print('p = %s' % (prob * 1000).astype(int))
+        print('i = %s' % (imp * 1000).astype(int))
 
 
 class Agent:
@@ -79,11 +80,11 @@ class Agent:
         self.hidden = self.planner.init_hidden()
 
     def action(self, env, player, show=False):
-        p, v, _, _, self.hidden = self.planner.inference(env.observation(player), self.hidden)
+        p, v, _, imp, self.hidden = self.planner.inference(env.observation(player), self.hidden)
         actions = env.legal_actions()
         if show:
             view(env, player=player)
-            print_outputs(env, softmax(p, actions), v)
+            print_outputs(env, softmax(p, actions), v, imp)
         ap_list = sorted([(a, p[a]) for a in actions], key=lambda x: -x[1])
         return ap_list[0][0]
 
@@ -98,12 +99,12 @@ class Agent:
 
 class SoftAgent(Agent):
     def action(self, env, player, show=False):
-        p, v, _, self.hidden = self.planner.inference(env.observation(player), self.hidden)
+        p, v, _, imp, self.hidden = self.planner.inference(env.observation(player), self.hidden)
         actions = env.legal_actions()
         prob = softmax(p, actions)
         if show:
             view(env, player=player)
-            print_outputs(env, prob, v)
+            print_outputs(env, prob, v, imp)
         return random.choices(np.arange(len(p)), weights=prob)[0]
 
 
