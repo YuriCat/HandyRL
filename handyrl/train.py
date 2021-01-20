@@ -413,6 +413,9 @@ class Trainer:
         self.update_flag = False
         self.shutdown_flag = False
 
+        if self.model.init_hidden() is not None:
+            print('Recurrent Network mode.')
+
     def update(self):
         if len(self.episodes) < self.args['minimum_episodes']:
             return None, 0  # return None before training
