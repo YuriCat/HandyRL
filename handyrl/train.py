@@ -176,7 +176,7 @@ def forward_prediction(model, hidden, batch, obs_mode):
         if k == 'policy':
             # gather turn player's policies
             o = o.view(*batch['turn_mask'].size()[:2], -1, o.size(-1))
-            outputs[k] = o.mul(batch['turn_mask'].unsqueeze(-1)).sum(-2) - batch['action_mask']
+            outputs[k] = o.mul(batch['turn_mask'].unsqueeze(-1)).sum(-2)
         else:
             # mask valid target values and cumulative rewards
             outputs[k] = o.view(*batch['turn_mask'].size()[:2], -1).mul(batch['observation_mask'])
@@ -204,7 +204,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     if 'return' in outputs:
         losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
 
-    entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
+    entropy = dist.Categorical(logits=outputs['policy'] - batch['action_mask']).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)

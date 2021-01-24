@@ -47,7 +47,6 @@ class Generator:
                         legal_actions = self.env.legal_actions()
                         action_mask = np.ones_like(p) * 1e32
                         action_mask[legal_actions] = 0
-                        p_turn = p - action_mask
                 moment['observation'][player] = obs
                 moment['value'][player] = v
 
@@ -55,9 +54,9 @@ class Generator:
                 x = np.exp(x - np.max(x, axis=-1))
                 return x / x.sum(axis=-1)
 
-            action = random.choices(legal_actions, weights=softmax(p_turn[legal_actions]))[0]
+            action = random.choices(legal_actions, weights=softmax(p[legal_actions]))[0]
 
-            moment['policy'] = p_turn
+            moment['policy'] = p
             moment['action_mask'] = action_mask
             moment['turn'] = self.env.turn()
             moment['action'] = action
