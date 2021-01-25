@@ -106,19 +106,20 @@ def make_batch(episodes, args):
         datum.append((p, v, act, oc, rew, ret, tmask, omask, amask, progress))
 
     p, v, act, oc, rew, ret, tmask, omask, amask, progress = zip(*datum)
+    half = args['half_float']
 
-    obs = to_torch(bimap_r(obs_zeros, rotate(obss), lambda _, o: np.array(o)))
-    p = to_torch(np.array(p))
-    v = to_torch(np.array(v))
-    act = to_torch(np.array(act))
-    oc = to_torch(np.array(oc))
-    rew = to_torch(np.array(rew))
-    ret = to_torch(np.array(ret))
-    emask = to_torch(np.array(emask))
-    tmask = to_torch(np.array(tmask))
-    omask = to_torch(np.array(omask))
-    amask = to_torch(np.array(amask))
-    progress = to_torch(np.array(progress))
+    obs = to_torch(bimap_r(obs_zeros, rotate(obss), lambda _, o: np.array(o)), half=half)
+    p = to_torch(np.array(p), half=half)
+    v = to_torch(np.array(v), half=half)
+    act = to_torch(np.array(act), half=half)
+    oc = to_torch(np.array(oc), half=half)
+    rew = to_torch(np.array(rew), half=half)
+    ret = to_torch(np.array(ret), half=half)
+    emask = to_torch(np.array(emask), half=half)
+    tmask = to_torch(np.array(tmask), half=half)
+    omask = to_torch(np.array(omask), half=half)
+    amask = to_torch(np.array(amask), half=half)
+    progress = to_torch(np.array(progress), half=half)
 
     return {
         'observation': obs,
@@ -366,6 +367,8 @@ class Trainer:
 
         batch_cnt, data_cnt, loss_sum = 0, 0, {}
         train_model = self.model
+        if self.args['half_float']:
+            train_model.half()
         if self.gpu:
             if self.gpu > 1:
                 train_model = nn.DataParallel(self.model)

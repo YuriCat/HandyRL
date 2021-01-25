@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from .util import map_r
 
 
-def to_torch(x, transpose=False, unsqueeze=None):
+def to_torch(x, transpose=False, unsqueeze=None, half=False):
     if x is None:
         return None
     elif isinstance(x, (list, tuple, set)):
@@ -29,6 +29,8 @@ def to_torch(x, transpose=False, unsqueeze=None):
 
     if a.dtype == np.int32 or a.dtype == np.int64:
         t = torch.LongTensor(a)
+    elif half:
+        t = torch.HalfTensor(a)
     else:
         t = torch.FloatTensor(a)
 
