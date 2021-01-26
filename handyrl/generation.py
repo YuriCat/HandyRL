@@ -34,6 +34,7 @@ class Generator:
                 break
 
             moment = {'observation': {}, 'value': {}, 'reward': {}, 'return': {}}
+            temperature = 0.9 ** len(moments)
 
             for player in self.env.players():
                 obs, v = None, None
@@ -48,7 +49,7 @@ class Generator:
                         action_mask = np.ones_like(p) * 1e32
                         action_mask[legal_actions] = 0
                         p_turn = p - action_mask
-                        sp_turn = model.inference(obs)['policy']
+                        sp_turn = model.inference(obs)['policy'] / temperature
                 moment['observation'][player] = obs
                 moment['value'][player] = v
 

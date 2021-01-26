@@ -102,7 +102,7 @@ class MonteCarloTree:
             selected_pattern = np.random.choice(unused_pattens)
         else:
             weights = np.array([n for n in edge.n.values()]) / sum(edge.n.values())
-            selected_pattern = np.random.choices(edge.n.keys(), p=weights)[0]
+            selected_pattern = np.random.choice(list(edge.n.keys()), p=weights)
 
         # State transition with selected action and pattern
         path.append('s' + str(selected_pattern))
@@ -112,7 +112,7 @@ class MonteCarloTree:
 
         return v_new
 
-    def think(self, root_obs, num_simulations, temperature=1.0, env=None, show=False):
+    def think(self, root_obs, num_simulations, env=None, show=False):
         # End point of MCTS
         start, prev_time = time.time(), 0
         for _ in range(num_simulations):
@@ -130,9 +130,9 @@ class MonteCarloTree:
 
         #  Return probability distribution weighted by the number of simulations
         root = self.nodes['|']
-        n = root.n + 1
-        p = np.log(n / n.sum()) * (1 / (temperature + 1e-8))
-        v = root.q_sum_all / root.n_all
+        n = root.n + 0.1
+        p = np.log(n / n.sum())
+        v = (root.q_sum * p).sum()
         return p, v
 
     def pv(self, env_):
