@@ -356,12 +356,12 @@ class MuZero(BaseModel):
         self.input_size = env.observation().shape
         layers, filters = args.get('layers', 3), args.get('filters', 32)
         internal_size = (filters, *self.input_size[1:])
-        self.pattern_length = 16
+        self.planning_args = args['planning']
 
         self.nets = nn.ModuleDict({
             'representation': self.Representation(self.input_size[0], layers, filters),
             'prediction': self.Prediction(internal_size, self.action_length, len(env.players())),
-            'dynamics': self.Dynamics(internal_size, layers, self.action_length, 2, self.pattern_length, 2),
+            'dynamics': self.Dynamics(internal_size, layers, self.action_length, 2, self.planning_args['transition_patterns'], 2),
         })
 
     def init_hidden(self, batch_size=None):
@@ -391,6 +391,6 @@ class MuZero(BaseModel):
         return outputs
 
     def inference(self, x, hidden=None, num_simulations=30):
-        tree = MonteCarloTree(self.nets, {})
+        tree = MonteCarloTree(self.nets, self.planning_args)
         p, v = tree.think(x, num_simulations)
         return {'policy': p, 'value': v}

@@ -34,7 +34,7 @@ class Generator:
                 break
 
             moment = {'observation': {}, 'value': {}, 'reward': {}, 'return': {}}
-            temperature = 0.9 ** len(moments)
+            temperature = self.args['policy_decay'] ** len(moments)
 
             for player in self.env.players():
                 obs, v = None, None
@@ -48,8 +48,7 @@ class Generator:
                         legal_actions = self.env.legal_actions()
                         action_mask = np.ones_like(p) * 1e32
                         action_mask[legal_actions] = 0
-                        p_turn = p - action_mask
-                        sp_turn = model.inference(obs)['policy'] / temperature
+                        p_turn = p / temperature
                 moment['observation'][player] = obs
                 moment['value'][player] = v
 
@@ -61,7 +60,6 @@ class Generator:
 
             moment['policy'] = p_turn
             moment['action_mask'] = action_mask
-            moment['supervised_policy'] = sp_turn
             moment['turn'] = self.env.turn()
             moment['action'] = action
             moments.append(moment)

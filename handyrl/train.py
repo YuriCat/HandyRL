@@ -67,7 +67,6 @@ def make_batch(episodes, args):
 
         # datum that is not changed by training configuration
         p = np.array([m['policy'] for m in moments])
-        sp = np.array([m['supervised_policy'] for m in moments])
         v = np.array(
             [replace_none(m['value'][m['turn']], [0, 0]) for m in moments],
             dtype=np.float32
@@ -90,7 +89,7 @@ def make_batch(episodes, args):
         act = np.array([m['action'] for m in moments]).reshape(-1, 1)
         progress = np.arange(ep['start'], ep['end'], dtype=np.float32) / ep['total']
 
-        pat = np.tile(np.arange(0, 16, dtype=np.int32)[np.newaxis, :], [args['forward_steps'], 1])
+        pat = np.tile(np.arange(0, args['planning']['transition_patterns'], dtype=np.int32)[np.newaxis, :], [args['forward_steps'], 1])
 
         # pad each array if step length is short
         if len(tmask) < args['forward_steps']:
@@ -98,7 +97,6 @@ def make_batch(episodes, args):
             obs = map_r(obs, lambda o: np.pad(o, [(0, pad_len)] + [(0, 0)] * (len(o.shape) - 1), 'constant', constant_values=0))
             p = np.pad(p, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
             v = np.concatenate([v, np.tile(oc, [pad_len, 1])])
-            sp = np.pad(sp, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
             act = np.concatenate([act, [[random.randrange(len(p[0]))] for _ in range(pad_len)]])
             rew = np.pad(rew, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
             ret = np.pad(ret, [(0, pad_len), (0, 0)], 'constant', constant_values=0)
@@ -109,14 +107,13 @@ def make_batch(episodes, args):
             progress = np.pad(progress, [(0, pad_len)], 'constant', constant_values=1)
 
         obss.append(obs)
-        datum.append((p, v, sp, act, oc, rew, ret, pat, tmask, omask, amask, progress))
+        datum.append((p, v, act, oc, rew, ret, pat, tmask, omask, amask, progress))
 
-    p, v, sp, act, oc, rew, ret, pat, tmask, omask, amask, progress = zip(*datum)
+    p, v, act, oc, rew, ret, pat, tmask, omask, amask, progress = zip(*datum)
 
     obs = to_torch(bimap_r(obs_zeros, rotate(obss), lambda _, o: np.array(o)))
     p = to_torch(np.array(p))
     v = to_torch(np.array(v))
-    sp = to_torch(np.array(sp))
     act = to_torch(np.array(act))
     oc = to_torch(np.array(oc))
     rew = to_torch(np.array(rew))
@@ -131,7 +128,6 @@ def make_batch(episodes, args):
     return {
         'observation': obs,
         'policy': p, 'value': v,
-        'supervised_policy': sp,
         'action': act, 'outcome': oc,
         'reward': rew, 'return': ret,
         'pattern': pat,
@@ -214,21 +210,21 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     turn_advantages = total_advantages.mul(tmasks).sum(-1, keepdim=True)
 
     losses['p'] = (-log_selected_policies * turn_advantages).sum()
-    spolicies = batch['supervised_policy'] - batch['action_mask']
-    losses['sp'] = (F.softmax(spolicies, -1) * (F.log_softmax(spolicies, -1) - F.log_softmax(outputs['policy'], -1))).sum(-1, keepdim=True).mul(tmasks).sum()
+    target_policies = batch['policy'] - batch['action_mask']
+    losses['pp'] = (F.softmax(target_policies, -1) * (F.log_softmax(target_policies, -1) - F.log_softmax(outputs['policy'], -1))).sum(-1, keepdim=True).mul(tmasks).sum()
     if 'value' in outputs:
         losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
-        losses['sv'] = ((outputs['value'] - batch['outcome']) ** 2).mul(omasks).sum() / 2
+        losses['pv'] = ((outputs['value'] - batch['outcome']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
         losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
 
     entropy = dist.Categorical(logits=outputs['policy'] - batch['action_mask']).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
-    teacher_weight = 1
+    planning_weight = 1
     reinforce_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
-    supervised_loss = losses['sp'] + losses.get('sv', 0)
-    base_loss = (1 - teacher_weight) * reinforce_loss + teacher_weight * supervised_loss
+    planning_loss = losses['pp'] + losses.get('pv', 0)
+    base_loss = (1 - planning_weight) * reinforce_loss + planning_weight * planning_loss
     entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
     losses['total'] = base_loss + entropy_loss
 

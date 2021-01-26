@@ -53,9 +53,9 @@ class MonteCarloTree:
     '''Monte Carlo Tree Search'''
     def __init__(self, model, args):
         self.model = model
+        self.args = args
         self.nodes = {}
         self.edges = {}
-        self.args = {}
 
     def search(self, rp, path):
         # Return predicted value from new state
@@ -71,7 +71,8 @@ class MonteCarloTree:
         p = node.p
         if len(path) == 0:
             # Add noise to policy on the root node
-            p = 0.75 * p + 0.25 * np.random.dirichlet([0.15] * np.prod(p.shape)).reshape(*p.shape)
+            noise = np.random.dirichlet([self.args['root_noise_alpha']] * np.prod(p.shape)).reshape(*p.shape)
+            p = (1 - self.args['root_noise_coef']) * p + self.args['root_noise_coef'] * noise
             # On the root node, we choose action only from legal actions
             p /= p.sum() + 1e-16
 
@@ -97,8 +98,8 @@ class MonteCarloTree:
         # Choose next state with double progressive widening
         edge = self.edges[key]
         k = 1.5 * (edge.n_all ** 0.3)
-        if k >= len(edge.n) and len(edge.n) < 16:
-            unused_pattens = [pattern for pattern in range(16) if pattern not in edge.n]
+        if k >= len(edge.n) and len(edge.n) < self.args['transition_patterns']:
+            unused_pattens = [pattern for pattern in range(self.args['transition_patterns']) if pattern not in edge.n]
             selected_pattern = np.random.choice(unused_pattens)
         else:
             weights = np.array([n for n in edge.n.values()]) / sum(edge.n.values())
