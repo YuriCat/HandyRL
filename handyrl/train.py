@@ -90,6 +90,8 @@ def make_batch(episodes, args):
         act = np.array([m['action'] for m in moments]).reshape(-1, 1)
         progress = np.arange(ep['start'], ep['end'], dtype=np.float32) / ep['total']
 
+        pat = np.tile(np.arange(0, 16, dtype=np.int32)[np.newaxis, :], [args['forward_steps'], 1])
+
         # pad each array if step length is short
         if len(tmask) < args['forward_steps']:
             pad_len = args['forward_steps'] - len(tmask)
@@ -107,9 +109,9 @@ def make_batch(episodes, args):
             progress = np.pad(progress, [(0, pad_len)], 'constant', constant_values=1)
 
         obss.append(obs)
-        datum.append((p, v, sp, act, oc, rew, ret, tmask, omask, amask, progress))
+        datum.append((p, v, sp, act, oc, rew, ret, pat, tmask, omask, amask, progress))
 
-    p, v, sp, act, oc, rew, ret, tmask, omask, amask, progress = zip(*datum)
+    p, v, sp, act, oc, rew, ret, pat, tmask, omask, amask, progress = zip(*datum)
 
     obs = to_torch(bimap_r(obs_zeros, rotate(obss), lambda _, o: np.array(o)))
     p = to_torch(np.array(p))
@@ -119,6 +121,7 @@ def make_batch(episodes, args):
     oc = to_torch(np.array(oc))
     rew = to_torch(np.array(rew))
     ret = to_torch(np.array(ret))
+    pat = to_torch(np.array(pat))
     emask = to_torch(np.array(emask))
     tmask = to_torch(np.array(tmask))
     omask = to_torch(np.array(omask))
@@ -131,6 +134,7 @@ def make_batch(episodes, args):
         'supervised_policy': sp,
         'action': act, 'outcome': oc,
         'reward': rew, 'return': ret,
+        'pattern': pat,
         'episode_mask': emask,
         'turn_mask': tmask, 'observation_mask': omask,
         'action_mask': amask,
@@ -162,6 +166,7 @@ def forward_prediction(model, hidden, batch, obs_mode):
         for t in range(batch['turn_mask'].size(1)):
             obs = map_r(observations, lambda o: o[:, t].reshape(-1, *o.size()[3:]))  # (..., B * P, ...)
             action = batch['action'][:, t]
+            pattern = batch['pattern'][:, t]
             #omask_ = batch['observation_mask'][:, t]
             #omask_ = omask_.sum(-1, keepdim=True)  # common hidden state
             #omask = map_r(hidden, lambda h: omask_.view(*h.size()[:2], *([1] * (len(h.size()) - 2))))
@@ -171,7 +176,7 @@ def forward_prediction(model, hidden, batch, obs_mode):
             #else:
             #    hidden_ = map_r(hidden_, lambda h: h.sum(1))  # (..., B * 1, ...)
             hidden_ = hidden
-            outputs_ = model(obs, hidden_, action)
+            outputs_ = model(obs, hidden_, action, pattern)
             for k, o in outputs_.items():
                 if k == 'hidden':
                     next_hidden = outputs_['hidden']

@@ -53,6 +53,15 @@ def softmax(x):
     return x / x.sum(axis=-1)
 
 
+def one_hot(x, length):
+    x_onehot = torch.FloatTensor(*x.size()[:-1], length)
+    if x.is_cuda:
+        x_onehot = x_onehot.cuda()
+    x_onehot.zero_()
+    x_onehot.scatter_(1, x, 1)
+    return x_onehot
+
+
 class Conv(nn.Module):
     def __init__(self, filters0, filters1, kernel_size, bn, bias=True):
         super().__init__()
@@ -291,7 +300,7 @@ class MuZero(BaseModel):
         def inference(self, x):
             self.eval()
             with torch.no_grad():
-                rp = self(torch.from_numpy(x).unsqueeze(0))
+                rp = self(to_torch(x, unsqueeze=0))
             return rp.cpu().numpy().squeeze(0)
 
     class Prediction(nn.Module):
@@ -309,31 +318,37 @@ class MuZero(BaseModel):
         def inference(self, rp):
             self.eval()
             with torch.no_grad():
-                p, v = self(torch.from_numpy(rp).unsqueeze(0))
+                p, v = self(to_torch(rp, unsqueeze=0))
             return p.cpu().numpy().squeeze(0), v.cpu().numpy().squeeze(0)
 
     class Dynamics(nn.Module):
         '''Abstract state transition'''
-        def __init__(self, rp_shape, action_length, action_filters, layers):
+        def __init__(self, rp_shape, layers, action_length, action_filters, pattern_length, pattern_filters):
             super().__init__()
             self.action_shape = action_filters, rp_shape[1], rp_shape[2]
+            self.pattern_shape = pattern_filters, rp_shape[1], rp_shape[2]
             filters = rp_shape[0]
             self.action_embedding = nn.Embedding(action_length, embedding_dim=np.prod(self.action_shape))
-            self.layer0 = Conv(rp_shape[0] + self.action_shape[0], filters, 3, bn=True)
+            self.pattern_embedding = nn.Embedding(pattern_length, embedding_dim=np.prod(self.pattern_shape))
+            self.layer0 = Conv(filters + action_filters + pattern_filters, filters, 3, bn=True)
             self.blocks = nn.ModuleList([WideResidualBlock(filters, 3, bn=True) for _ in range(layers)])
 
-        def forward(self, rp, a):
+        def forward(self, rp, a, pt):
             arp = self.action_embedding(a).view(-1, *self.action_shape)
-            h = torch.cat([rp, arp], dim=1)
+            ptrp = self.pattern_embedding(pt).view(-1, pt.size(1), *self.pattern_shape)
+            h = torch.cat([rp, arp], dim=1).unsqueeze(1).repeat(1, pt.size(1), 1, 1, 1)
+            h = torch.cat([h, ptrp], dim=2).contiguous()
+            h = h.view(-1, *h.size()[2:])
             h = self.layer0(h)
             for block in self.blocks:
                 h = block(h)
+            h = h.view(-1, pt.size(1), *h.size()[1:])
             return h
 
-        def inference(self, rp, a):
+        def inference(self, rp, a, pt):
             self.eval()
             with torch.no_grad():
-                rp = self(torch.from_numpy(rp).unsqueeze(0), torch.from_numpy(a).unsqueeze(0))
+                rp = self(to_torch(rp, unsqueeze=0), to_torch(a, unsqueeze=0), to_torch(pt, unsqueeze=0))
             return rp.cpu().numpy().squeeze(0)
 
     def __init__(self, env, args={}):
@@ -341,26 +356,37 @@ class MuZero(BaseModel):
         self.input_size = env.observation().shape
         layers, filters = args.get('layers', 3), args.get('filters', 32)
         internal_size = (filters, *self.input_size[1:])
+        self.pattern_length = 16
 
         self.nets = nn.ModuleDict({
             'representation': self.Representation(self.input_size[0], layers, filters),
             'prediction': self.Prediction(internal_size, self.action_length, len(env.players())),
-            'dynamics': self.Dynamics(internal_size, self.action_length, 2, layers),
+            'dynamics': self.Dynamics(internal_size, layers, self.action_length, 2, self.pattern_length, 2),
         })
 
     def init_hidden(self, batch_size=None):
         return {}
 
-    def forward(self, x, hidden, action=None):
+    def forward(self, x, hidden, action=None, pattern=None):
         if 'representation' not in hidden:
             rp = self.nets['representation'](x)
         else:
-            rp = hidden['representation']
+            rps = hidden['representation']
+            if rps.size(1) > 1:
+                # select nearest representation
+                rp_true = self.nets['representation'](x)
+                rp_diffs = torch.abs(rps - rp_true.unsqueeze(1)).sum(-1).sum(-1).sum(-1)
+                _, min_index = torch.min(rp_diffs, 1)
+                min_index = min_index.unsqueeze(1)
+                min_mask = one_hot(min_index, rps.size(1)).view(-1, rps.size(1), 1, 1, 1)
+                rp = (rps * min_mask).sum(1)
+            else:
+                rp = rps.squeeze(1)
         p, v = self.nets['prediction'](rp)
         outputs = {'policy': p, 'value': v}
 
         if action is not None:
-            next_rp = self.nets['dynamics'](rp, action)
+            next_rp = self.nets['dynamics'](rp, action, pattern)
             outputs['hidden'] = {'representation': next_rp}
         return outputs
 
