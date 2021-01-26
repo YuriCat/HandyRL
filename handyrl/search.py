@@ -132,7 +132,7 @@ class MonteCarloTree:
         root = self.nodes['|']
         n = root.n + 0.1
         p = np.log(n / n.sum())
-        v = (root.q_sum * p).sum()
+        v = root.q_sum * p.reshape(-1, 1)
         return p, v
 
     def pv(self, env_):
