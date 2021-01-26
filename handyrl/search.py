@@ -59,7 +59,7 @@ class MonteCarloTree:
 
     def search(self, rp, path):
         # Return predicted value from new state
-        key = '|' + ' '.join(map(str, path))
+        key = '|' + ''.join(path)
         if key not in self.nodes:
             p, v = self.model['prediction'].inference(rp)
             p, v = softmax(p), v
@@ -83,21 +83,21 @@ class MonteCarloTree:
         selected_action = np.argmax(ucb)
 
         # Search next state by recursively calling this function
+        path.append('a' + str(selected_action))
         q_new = self.transition(rp, path, selected_action)
         node.update(selected_action, q_new)
 
         return q_new
 
     def transition(self, rp, path, action, q=None):
-        path.append(action)
-        key = '+' + ' '.join(map(str, path))
+        key = '+' + ''.join(path)
         if key not in self.edges:
             self.edges[key] = Edge(q)
 
         # Choose next state with double progressive widening
         edge = self.edges[key]
-        k = 2.0 * (edge.n_all ** 1.3)
-        if k > len(edge.n) and len(edge.n) < 16:
+        k = 1.5 * (edge.n_all ** 0.3)
+        if k >= len(edge.n) and len(edge.n) < 16:
             unused_pattens = [pattern for pattern in range(16) if pattern not in edge.n]
             selected_pattern = np.random.choice(unused_pattens)
         else:
@@ -105,6 +105,7 @@ class MonteCarloTree:
             selected_pattern = np.random.choices(edge.n.keys(), p=weights)[0]
 
         # State transition with selected action and pattern
+        path.append('s' + str(selected_pattern))
         next_rp = self.model['dynamics'].inference(rp, np.array([action]), np.array([[selected_pattern]]))[0]
         v_new = self.search(next_rp, path)
         edge.update(selected_pattern, v_new)
