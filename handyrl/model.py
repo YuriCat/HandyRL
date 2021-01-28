@@ -43,15 +43,6 @@ def to_gpu_or_not(data, gpu):
     return to_gpu(data) if gpu else data
 
 
-def one_hot(x, length):
-    x_onehot = torch.FloatTensor(*x.size()[:-1], length)
-    if x.is_cuda:
-        x_onehot = x_onehot.cuda()
-    x_onehot.zero_()
-    x_onehot.scatter_(1, x, 1)
-    return x_onehot
-
-
 class Conv(nn.Module):
     def __init__(self, filters0, filters1, kernel_size, bn, bias=True):
         super().__init__()
@@ -365,11 +356,10 @@ class MuZero(BaseModel):
             if rps.size(1) > 1:
                 # select nearest representation
                 rp_true = self.nets['representation'](x)
-                rp_diffs = torch.abs(rps - rp_true.unsqueeze(1)).sum(-1).sum(-1).sum(-1)
+                rp_diffs = torch.abs(rps - rp_true.unsqueeze(1)).view(*rps.size()[:2], -1).sum(-1)
                 _, min_index = torch.min(rp_diffs, 1)
-                min_index = min_index.unsqueeze(1)
-                min_mask = one_hot(min_index, rps.size(1)).view(-1, rps.size(1), 1, 1, 1)
-                rp = (rps * min_mask).sum(1)
+                min_index = min_index.view(-1, 1, 1, 1, 1).repeat(1, 1, *rps.size()[2:])
+                rp = torch.gather(rps, 1, min_index).squeeze(1)
             else:
                 rp = rps.squeeze(1)
         p, v = self.nets['prediction'](rp)
