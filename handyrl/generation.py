@@ -61,7 +61,10 @@ class Generator:
                 x = np.exp(x - np.max(x, axis=-1))
                 return x / x.sum(axis=-1)
 
-            action = random.choices(legal_actions, weights=softmax(p[legal_actions]))[0]
+            if random.random() < self.args['epsilon']:
+                action = random.choice(legal_actions)
+            else:
+                action = random.choices(legal_actions, weights=softmax(p[legal_actions]))[0]
 
             moment['turn'] = self.env.turn()
             moment['action'] = action

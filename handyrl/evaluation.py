@@ -50,11 +50,12 @@ def view_transition(env):
         pass
 
 
-def print_outputs(env, prob, v):
+def print_outputs(env, prob, v, q):
     if hasattr(env, 'print_outputs'):
         env.print_outputs(prob, v)
     else:
-        print('v = %f' % v)
+        print('v = %s' % v)
+        print('q = %s' % (q * 1000).astype(int))
         print('p = %s' % (prob * 1000).astype(int))
 
 
@@ -79,6 +80,7 @@ class Agent:
         actions = env.legal_actions()
         p = outputs['policy']
         v = outputs.get('value', None)
+        q = outputs.get('qvalue', None)
         mask = np.ones_like(p)
         mask[actions] = 0
         p -= mask * 1e32
@@ -89,7 +91,7 @@ class Agent:
 
         if show:
             view(env, player=player)
-            print_outputs(env, softmax(p), v)
+            print_outputs(env, softmax(p), v, q)
 
         if self.temperature == 0:
             ap_list = sorted([(a, p[a]) for a in actions], key=lambda x: -x[1])

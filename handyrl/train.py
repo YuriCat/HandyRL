@@ -178,7 +178,7 @@ def forward_prediction(model, hidden, batch, obs_mode):
     return outputs
 
 
-def compose_losses(outputs, log_selected_policies, total_advantages, targets, batch, args):
+def compose_losses(outputs, outputs_nograd, log_selected_policies, total_advantages, targets, batch, args):
     """Caluculate loss value
 
     Returns:
@@ -192,9 +192,10 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     dcnt = tmasks.sum().item()
     turn_advantages = total_advantages.mul(tmasks).sum(2, keepdim=True)
 
-    losses['p'] = (-log_selected_policies * turn_advantages).sum()
+    legal_actions = F.softmax(-batch['action_mask'], -1)
+    losses['p'] = (-F.log_softmax(outputs['policy'], -1) * (outputs_nograd['qvalue'] - outputs_nograd['value'])).mul(legal_actions).mul(tmasks).sum()
     selected_qvalues = outputs['qvalue'].gather(-1, batch['action'])
-    losses['q'] = ((selected_qvalues - targets['value']) ** 2).mul(omasks).sum() / 2
+    losses['q'] = ((selected_qvalues - targets['value']) ** 2).mul(tmasks).sum() / 2
     if 'value' in outputs:
         losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
@@ -241,9 +242,9 @@ def compute_loss(batch, model, hidden, args):
     targets = {}
     advantages = {}
 
-    values_nograd = (F.softmax(outputs_nograd['policy'], -1) * outputs_nograd['qvalue']).sum(-1, keepdim=True)
+    outputs_nograd['value'] = (F.softmax(outputs_nograd['policy'], -1) * outputs_nograd['qvalue']).sum(-1, keepdim=True)
 
-    value_args = values_nograd, batch['outcome'], None, args['lambda'], 1, clipped_rhos, cs
+    value_args = outputs_nograd.get('value', None), batch['outcome'], None, args['lambda'], 1, clipped_rhos, cs
     return_args = outputs_nograd.get('return', None), batch['return'], batch['reward'], args['lambda'], args['gamma'], clipped_rhos, cs
 
     targets['value'], advantages['value'] = compute_target(args['value_target'], *value_args)
@@ -256,7 +257,7 @@ def compute_loss(batch, model, hidden, args):
     # compute policy advantage
     total_advantages = clipped_rhos * sum(advantages.values())
 
-    return compose_losses(outputs, log_selected_t_policies, total_advantages, targets, batch, args)
+    return compose_losses(outputs, outputs_nograd, log_selected_t_policies, total_advantages, targets, batch, args)
 
 
 class Batcher:
