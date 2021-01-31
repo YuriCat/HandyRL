@@ -252,12 +252,12 @@ class SimpleConv2DModel(BaseModel):
         self.encoder = Encoder(self.input_size, filters)
         self.body = WideResNet(layers, filters)
         self.head_p = Head(internal_size, 2, self.action_length)
-        self.head_v = Head(internal_size, 1, 1)
+        self.head_q = Head(internal_size, 2, self.action_length)
 
     def forward(self, x, hidden=None):
         h = self.encoder(x)
         h = self.body(h)
         h_p = self.head_p(h)
-        h_v = self.head_v(h)
+        h_q = self.head_q(h)
 
-        return {'policy': h_p, 'value': torch.tanh(h_v)}
+        return {'policy': h_p, 'qvalue': torch.tanh(h_q)}

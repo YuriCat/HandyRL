@@ -193,6 +193,8 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     turn_advantages = total_advantages.mul(tmasks).sum(2, keepdim=True)
 
     losses['p'] = (-log_selected_policies * turn_advantages).sum()
+    selected_qvalues = outputs['qvalue'].gather(-1, batch['action'])
+    losses['q'] = ((selected_qvalues - targets['value']) ** 2).mul(omasks).sum() / 2
     if 'value' in outputs:
         losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
@@ -201,7 +203,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
-    base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
+    base_loss = losses['p'] + losses.get('q', 0) + losses.get('v', 0) + losses.get('r', 0)
     entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
     losses['total'] = base_loss + entropy_loss
 
@@ -224,21 +226,24 @@ def compute_loss(batch, model, hidden, args):
     cs = torch.clamp(rhos, 0, clip_c_threshold)
     outputs_nograd = {k: o.detach() for k, o in outputs.items()}
 
-    if 'value' in outputs_nograd:
-        values_nograd = outputs_nograd['value']
-        if values_nograd.size(2) == 2:  # two player zerosum game
-            values_nograd_opponent = -torch.stack([values_nograd[:, :, 1], values_nograd[:, :, 0]], dim=2)
-            if args['observation']:
-                values_nograd = (values_nograd + values_nograd_opponent) / 2
-            else:
-                values_nograd = values_nograd + values_nograd_opponent
-        outputs_nograd['value'] = values_nograd * emasks + batch['outcome'] * (1 - emasks)
+    for key in ['value', 'qvalue']:
+        if key in outputs_nograd:
+            values_nograd = outputs_nograd[key]
+            if values_nograd.size(2) == 2:  # two player zerosum game
+                values_nograd_opponent = -torch.stack([values_nograd[:, :, 1], values_nograd[:, :, 0]], dim=2)
+                if args['observation']:
+                    values_nograd = (values_nograd + values_nograd_opponent) / 2
+                else:
+                    values_nograd = values_nograd + values_nograd_opponent
+            outputs_nograd[key] = values_nograd * emasks + batch['outcome'] * (1 - emasks)
 
     # compute targets and advantage
     targets = {}
     advantages = {}
 
-    value_args = outputs_nograd.get('value', None), batch['outcome'], None, args['lambda'], 1, clipped_rhos, cs
+    values_nograd = (F.softmax(outputs_nograd['policy'], -1) * outputs_nograd['qvalue']).sum(-1, keepdim=True)
+
+    value_args = values_nograd, batch['outcome'], None, args['lambda'], 1, clipped_rhos, cs
     return_args = outputs_nograd.get('return', None), batch['return'], batch['reward'], args['lambda'], args['gamma'], clipped_rhos, cs
 
     targets['value'], advantages['value'] = compute_target(args['value_target'], *value_args)
