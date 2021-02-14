@@ -218,10 +218,17 @@ class DRC(nn.Module):
 # simple model
 
 class BaseModel(nn.Module):
-    def __init__(self, env, args=None, action_length=None):
+    def __init__(self, env, args={}):
         super().__init__()
-        self.action_length = env.action_length() if action_length is None else action_length
+        self.args = args
+        self.action_length = env.action_length()
         self.num_players = len(env.players())
+        if self.args.get('objective', False):
+            self.policy_shape = self.num_players, self.action_length
+            self.value_shape = self.num_players, 1
+        else:
+            self.policy_shape = self.action_length,
+            self.value_shape = 1,
 
     def init_hidden(self, batch_size=None):
         return None
@@ -238,7 +245,10 @@ class BaseModel(nn.Module):
 
 class RandomModel(BaseModel):
     def inference(self, x=None, hidden=None):
-        return {'policy': np.zeros(self.action_length, dtype=np.float32), 'value': np.zeros(1, dtype=np.float32)}
+        return {
+            'policy': np.zeros(self.policy_shape, dtype=np.float32),
+            'value': np.zeros(self.value_shape, dtype=np.float32),
+        }
 
 
 class SimpleConv2DModel(BaseModel):
@@ -252,13 +262,13 @@ class SimpleConv2DModel(BaseModel):
 
         self.encoder = Encoder(self.input_size, filters)
         self.body = WideResNet(layers, filters)
-        self.head_p = Head(internal_size, 2, self.action_length)
-        self.head_v = Head(internal_size, 1, 1)
+        self.head_p = Head(internal_size, 2, np.prod(self.policy_shape))
+        self.head_v = Head(internal_size, 1, np.prod(self.value_shape))
 
     def forward(self, x, hidden=None):
         h = self.encoder(x)
         h = self.body(h)
-        h_p = self.head_p(h)
-        h_v = self.head_v(h)
+        h_p = self.head_p(h).view(-1, *self.policy_shape)
+        h_v = self.head_v(h).view(-1, *self.value_shape)
 
         return {'policy': h_p, 'value': torch.tanh(h_v)}
