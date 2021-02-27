@@ -9,7 +9,10 @@ import time
 import functools
 from socket import gethostname
 from collections import deque
-import multiprocessing as mp
+
+import torch
+import torch.multiprocessing as mp
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 from .environment import prepare_env, make_env
 from .connection import QueueCommunicator

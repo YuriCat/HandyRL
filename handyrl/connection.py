@@ -9,7 +9,10 @@ import pickle
 import threading
 import queue
 import select
-import multiprocessing as mp
+
+import torch
+import torch.multiprocessing as mp
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 
 def send_recv(conn, sdata):
@@ -185,7 +188,7 @@ class MultiProcessJobExecutor:
         print('start receiver %d' % index)
         conns = [conn for i, conn in enumerate(self.conns) if i % self.num_receivers == index]
         while not self.shutdown_flag:
-            tmp_conns = mp.connection.wait(conns)
+            tmp_conns, _, _ = select.select(conns, [], [], 0.3)
             for conn in tmp_conns:
                 data, cnt = conn.recv()
                 if self.postprocess is not None:
