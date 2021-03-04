@@ -11,6 +11,7 @@ import numpy as np
 
 from .environment import prepare_env, make_env
 from .connection import send_recv, accept_socket_connections, connect_socket_connection
+from .util import softmax
 
 
 network_match_port = 9876
@@ -83,10 +84,6 @@ class Agent:
         mask[actions] = 0
         p -= mask * 1e32
 
-        def softmax(x):
-            x = np.exp(x - np.max(x, axis=-1))
-            return x / x.sum(axis=-1)
-
         if show:
             view(env, player=player)
             print_outputs(env, softmax(p), v)
@@ -150,7 +147,7 @@ class NetworkAgentClient:
                     ret = self.env.action2str(ret, player)
             else:
                 ret = getattr(self.env, command)(*args)
-                if command == 'play_info':
+                if command == 'step_info':
                     view_transition(self.env)
             self.conn.send(ret)
 
@@ -163,11 +160,8 @@ class NetworkAgent:
         send_recv(self.conn, ('reset_info', [data]))
         return send_recv(self.conn, ('reset', []))
 
-    def chance(self, data):
-        return send_recv(self.conn, ('chance_info', [data]))
-
-    def play(self, data):
-        return send_recv(self.conn, ('play_info', [data]))
+    def step(self, data):
+        return send_recv(self.conn, ('step_info', [data]))
 
     def outcome(self, outcome):
         return send_recv(self.conn, ('outcome', [outcome]))
@@ -186,10 +180,6 @@ def exec_match(env, agents, critic, show=False, game_args={}):
     for agent in agents.values():
         agent.reset(env, show=show)
     while not env.terminal():
-        if env.chance():
-            return None
-        if env.terminal():
-            break
         if show and critic is not None:
             print('cv = ', critic.observe(env, None, show=False)[0])
         turn_players = env.turns()
@@ -199,7 +189,7 @@ def exec_match(env, agents, critic, show=False, game_args={}):
                 actions[p] = agent.action(env, p, show=show)
             else:
                 agent.observe(env, p, show=show)
-        if env.plays(actions):
+        if env.steps(actions):
             return None
         if show:
             view_transition(env)
@@ -217,13 +207,6 @@ def exec_network_match(env, network_agents, critic, show=False, game_args={}):
         info = env.diff_info(p)
         agent.reset(info)
     while not env.terminal():
-        if env.chance():
-            return None
-        for p, agent in network_agents.items():
-            info = env.diff_info(p)
-            agent.chance(info)
-        if env.terminal():
-            break
         if show and critic is not None:
             print('cv = ', critic.observe(env, None, show=False)[0])
         turn_players = env.turns()
@@ -234,11 +217,11 @@ def exec_network_match(env, network_agents, critic, show=False, game_args={}):
                 actions[p] = env.str2action(action, p)
             else:
                 agent.observe(p)
-        if env.plays(actions):
+        if env.steps(actions):
             return None
         for p, agent in network_agents.items():
             info = env.diff_info(p)
-            agent.play(info)
+            agent.step(info)
     outcome = env.outcome()
     for p, agent in network_agents.items():
         agent.outcome(outcome[p])

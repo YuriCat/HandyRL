@@ -46,24 +46,18 @@ class BaseEnvironment:
         raise NotImplementedError()
 
     #
-    # Should be defined in all games which has stochastic state transition before deciding action
+    # Should be defined in all games except you implement original steps() function
     #
-    def chance(self):
-        pass
-
-    #
-    # Should be defined in all games except you implement original plays() function
-    #
-    def play(self, action, player):
+    def step(self, action, player):
         raise NotImplementedError()
 
     #
     # Should be defined in games which has simultaneous trainsition
     #
-    def plays(self, actions):
+    def steps(self, actions):
         for p, action in actions.items():
             if action is not None:
-                self.play(action, p)
+                self.step(action, p)
 
     #
     # Should be defined if you use multiplayer sequential action game
@@ -146,11 +140,5 @@ class BaseEnvironment:
     #
     # Should be defined if you use network battle mode
     #
-    def chance_info(self, _):
-        pass
-
-    #
-    # Should be defined if you use network battle mode
-    #
-    def play_info(self, info):
-        self.play(info)
+    def step_info(self, info):
+        self.step(info)
