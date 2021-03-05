@@ -234,6 +234,7 @@ class QueueCommunicator:
 
     def disconnect(self, conn):
         print('disconnected')
+        conn.close()
         self.conns.pop(conn, None)
 
     def _send_thread(self):
