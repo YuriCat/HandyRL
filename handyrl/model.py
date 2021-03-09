@@ -251,7 +251,7 @@ class RandomModel(BaseModel):
         }
 
 
-class SimpleConv2DModel(BaseModel):
+class SimpleConv2dModel(BaseModel):
     def __init__(self, env, args={}):
         super().__init__(env, args)
 
