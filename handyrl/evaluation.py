@@ -11,6 +11,7 @@ import numpy as np
 
 from .environment import prepare_env, make_env
 from .connection import send_recv, accept_socket_connections, connect_socket_connection
+from .util import softmax
 
 
 network_match_port = 9876
@@ -21,7 +22,7 @@ class RandomAgent:
         pass
 
     def action(self, env, player, show=False):
-        actions = env.legal_actions()
+        actions = env.legal_actions(player)
         return random.choice(actions)
 
     def observe(self, env, player, show=False):
@@ -31,9 +32,9 @@ class RandomAgent:
 class RuleBasedAgent(RandomAgent):
     def action(self, env, player, show=False):
         if hasattr(env, 'rule_based_action'):
-            return env.rule_based_action()
+            return env.rule_based_action(player)
         else:
-            return random.choice(env.legal_actions())
+            return random.choice(env.legal_actions(player))
 
 
 def view(env, player=None):
@@ -76,16 +77,12 @@ class Agent:
 
     def action(self, env, player, show=False):
         outputs = self.plan(env.observation(player))
-        actions = env.legal_actions()
+        actions = env.legal_actions(player)
         p_ = outputs['policy']
         v = outputs.get('value', None)
         mask = np.ones_like(p_)
         mask[actions] = 0
         p = p_ - mask * 1e32
-
-        def softmax(x):
-            x = np.exp(x - np.max(x, axis=-1))
-            return x / x.sum(axis=-1)
 
         if show:
             view(env, player=player)
@@ -151,7 +148,7 @@ class NetworkAgentClient:
                     ret = self.env.action2str(ret, player)
             else:
                 ret = getattr(self.env, command)(*args)
-                if command == 'play_info':
+                if command == 'update':
                     view_transition(self.env)
             self.conn.send(ret)
 
@@ -160,15 +157,8 @@ class NetworkAgent:
     def __init__(self, conn):
         self.conn = conn
 
-    def reset(self, data):
-        send_recv(self.conn, ('reset_info', [data]))
-        return send_recv(self.conn, ('reset', []))
-
-    def chance(self, data):
-        return send_recv(self.conn, ('chance_info', [data]))
-
-    def play(self, data):
-        return send_recv(self.conn, ('play_info', [data]))
+    def update(self, data, reset):
+        return send_recv(self.conn, ('update', [data, reset]))
 
     def outcome(self, outcome):
         return send_recv(self.conn, ('outcome', [outcome]))
@@ -187,18 +177,16 @@ def exec_match(env, agents, critic, show=False, game_args={}):
     for agent in agents.values():
         agent.reset(env, show=show)
     while not env.terminal():
-        if env.chance():
-            return None
-        if env.terminal():
-            break
         if show and critic is not None:
             print('cv = ', critic.observe(env, None, show=False)[0])
+        turn_players = env.turns()
+        actions = {}
         for p, agent in agents.items():
-            if p == env.turn():
-                action = agent.action(env, p, show=show)
+            if p in turn_players:
+                actions[p] = agent.action(env, p, show=show)
             else:
                 agent.observe(env, p, show=show)
-        if env.play(action):
+        if env.step(actions):
             return None
         if show:
             view_transition(env)
@@ -214,28 +202,23 @@ def exec_network_match(env, network_agents, critic, show=False, game_args={}):
         return None
     for p, agent in network_agents.items():
         info = env.diff_info(p)
-        agent.reset(info)
+        agent.update(info, True)
     while not env.terminal():
-        if env.chance():
-            return None
-        for p, agent in network_agents.items():
-            info = env.diff_info(p)
-            agent.chance(info)
-        if env.terminal():
-            break
         if show and critic is not None:
             print('cv = ', critic.observe(env, None, show=False)[0])
+        turn_players = env.turns()
+        actions = {}
         for p, agent in network_agents.items():
-            if p == env.turn():
-                action_ = agent.action(p)
-                action = env.str2action(action_, p)
+            if p in turn_players:
+                action = agent.action(p)
+                actions[p] = env.str2action(action, p)
             else:
                 agent.observe(p)
-        if env.play(action):
+        if env.step(actions):
             return None
         for p, agent in network_agents.items():
             info = env.diff_info(p)
-            agent.play(info)
+            agent.update(info, False)
     outcome = env.outcome()
     for p, agent in network_agents.items():
         agent.outcome(outcome[p])
@@ -246,7 +229,7 @@ class Evaluator:
     def __init__(self, env, args):
         self.env = env
         self.args = args
-        self.default_agent = RuleBasedAgent()
+        self.default_agent = RandomAgent()  # RuleBasedAgent, trained agent, etc.
 
     def execute(self, models, args):
         agents = {}
@@ -359,7 +342,7 @@ def network_match_acception(n, env_args, num_agents, port):
             conn = waiting_conns[0]
             accepted_conns.append(conn)
             waiting_conns = waiting_conns[1:]
-            conn.send(env_args)  # send accpept with environment arguments
+            conn.send(env_args)  # send accept with environment arguments
 
     agents_list = [
         [NetworkAgent(accepted_conns[i * num_agents + j]) for j in range(num_agents)]
@@ -371,9 +354,9 @@ def network_match_acception(n, env_args, num_agents, port):
 
 def get_model(env, model_path):
     import torch
-    from .model import SimpleConv2DModel as DefaultModel
+    from .model import SimpleConv2dModel as DefaultModel
     model = env.net()(env) if hasattr(env, 'net') else DefaultModel(env)
-    model.load_state_dict(torch.load(model_path), strict=False)
+    model.load_state_dict(torch.load(model_path))
     model.eval()
     return model
 
@@ -401,7 +384,7 @@ def eval_main(args, argv):
     seed = random.randrange(1e8)
     print('seed = %d' % seed)
 
-    agents = [agent1, RandomAgent()]
+    agents = [agent1] + [RandomAgent() for _ in range(len(env.players()) - 1)]
 
     evaluate_mp(env, agents, critic, env_args, {'default': {}}, num_process, num_games, seed)
 

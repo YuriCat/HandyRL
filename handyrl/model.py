@@ -219,9 +219,10 @@ class DRC(nn.Module):
 # simple model
 
 class BaseModel(nn.Module):
-    def __init__(self, env, args=None, action_length=None):
+    def __init__(self, env, args=None):
         super().__init__()
-        self.action_length = env.action_length() if action_length is None else action_length
+        self.action_length = env.action_length()
+        self.num_players = len(env.players())
 
     def init_hidden(self, batch_size=None):
         return None
@@ -241,7 +242,7 @@ class RandomModel(BaseModel):
         return {'policy': np.zeros(self.action_length, dtype=np.float32), 'value': np.zeros(2, dtype=np.float32)}
 
 
-class SimpleConv2DModel(BaseModel):
+class SimpleConv2dModel(BaseModel):
     def __init__(self, env, args={}):
         super().__init__(env, args)
 

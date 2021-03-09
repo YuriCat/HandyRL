@@ -131,7 +131,7 @@ def open_multiprocessing_connections(num_process, target, args_func):
     return s_conns
 
 
-class MultiProcessWorkers:
+class MultiProcessJobExecutor:
     def __init__(self, func, send_generator, num, postprocess=None, buffer_length=512, num_receivers=1):
         self.send_generator = send_generator
         self.postprocess = postprocess
@@ -244,6 +244,8 @@ class QueueCommunicator:
                 continue
             try:
                 conn.send(send_data)
+            except ConnectionResetError:
+                self.disconnect(conn)
             except BrokenPipeError:
                 self.disconnect(conn)
 
