@@ -42,8 +42,11 @@ class BaseEnvironment:
     def __init__(self, args={}):
         pass
 
-    def __str__(self):
-        return ''
+    '''def __str__(self):
+        try:
+            self.view(player=None)
+        except:
+            return super().__str__()'''
 
     #
     # Should be defined in all games
@@ -142,3 +145,15 @@ class BaseEnvironment:
     #
     def update(self, info, reset):
         raise NotImplementedError()
+
+    #
+    # Should be defined if you output the current state
+    #
+    def view(self, player=None):
+        return str(self)
+
+    #
+    # Should be defined if you output the state transition
+    #
+    def view_transition(self):
+        return ''

@@ -15,20 +15,6 @@ from .agent import RandomAgent, RuleBasedAgent, Agent, EnsembleAgent, SoftAgent
 network_match_port = 9876
 
 
-def view(env, player=None):
-    if hasattr(env, 'view'):
-        env.view(player=player)
-    else:
-        print(env)
-
-
-def view_transition(env):
-    if hasattr(env, 'view_transition'):
-        env.view_transition()
-    else:
-        pass
-
-
 class NetworkAgentClient:
     def __init__(self, agent, env, conn):
         self.conn = conn
@@ -44,7 +30,7 @@ class NetworkAgentClient:
                 print('outcome = %f' % args[0])
             elif hasattr(self.agent, command):
                 if command == 'action' or command == 'observe':
-                    view(self.env)
+                    print(self.env.view())
                 ret = getattr(self.agent, command)(self.env, *args, show=True)
                 if command == 'action':
                     player = args[0]
@@ -55,7 +41,7 @@ class NetworkAgentClient:
                     reset = args[1]
                     if reset:
                         self.agent.reset(self.env, show=True)
-                    view_transition(self.env)
+                    print(self.env.view())
             self.conn.send(ret)
 
 
@@ -84,7 +70,7 @@ def exec_match(env, agents, critic, show=False, game_args={}):
         agent.reset(env, show=show)
     while not env.terminal():
         if show:
-            view(env)
+            print(env.view())
         if show and critic is not None:
             print('cv = ', critic.observe(env, None, show=False)[0])
         turn_players = env.turns()
@@ -97,7 +83,7 @@ def exec_match(env, agents, critic, show=False, game_args={}):
         if env.step(actions):
             return None
         if show:
-            view_transition(env)
+            print(env.view_transition(), end='')
     outcome = env.outcome()
     if show:
         print('final outcome = %s' % outcome)
@@ -113,7 +99,7 @@ def exec_network_match(env, network_agents, critic, show=False, game_args={}):
         agent.update(info, True)
     while not env.terminal():
         if show:
-            view(env)
+            print(env.view())
         if show and critic is not None:
             print('cv = ', critic.observe(env, None, show=False)[0])
         turn_players = env.turns()
