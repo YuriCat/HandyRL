@@ -139,7 +139,7 @@ class Evaluator:
     def __init__(self, env, args):
         self.env = env
         self.args = args
-        self.default_agent = RandomAgent()  # RuleBasedAgent, trained agent, etc.
+        self.default_agent = RuleBasedAgent()  # RuleBasedAgent, trained agent, etc.
 
     def execute(self, models, args):
         agents = {}
