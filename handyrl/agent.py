@@ -16,7 +16,7 @@ class RandomAgent:
 
     def action(self, env, player, show=False):
         actions = env.legal_actions(player)
-        return random.choice(actions)
+        return random.choice(actions) if len(actions) > 0 else None
 
 
 class RuleBasedAgent(RandomAgent):
@@ -24,7 +24,8 @@ class RuleBasedAgent(RandomAgent):
         if hasattr(env, 'rule_based_action'):
             return env.rule_based_action(player)
         else:
-            return random.choice(env.legal_actions(player))
+            actions = env.legal_actions(player)
+            return random.choice(actions) if len(actions) > 0 else None
 
 
 def print_outputs(env, prob, v):
@@ -53,6 +54,8 @@ class Agent:
     def action(self, env, player, show=False):
         outputs = self.plan(env.observation(player))
         actions = env.legal_actions(player)
+        if len(actions) == 0:
+            return None
         p = outputs['policy']
         v = outputs.get('value', None)
         mask = np.ones_like(p)

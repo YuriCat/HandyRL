@@ -48,7 +48,10 @@ class Generator:
                 action_mask = np.ones_like(p_) * 1e32
                 action_mask[legal_actions] = 0
                 p = p_ - action_mask
-                action = random.choices(legal_actions, weights=softmax(p[legal_actions]))[0]
+                if len(legal_actions) > 0:
+                    action = random.choices(legal_actions, weights=softmax(p[legal_actions]))[0]
+                else:
+                    action = None
 
                 moment['policy'][player] = p
                 moment['action_mask'][player] = action_mask
