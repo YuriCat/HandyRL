@@ -218,7 +218,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
     entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
     adversarial_model_loss = -adversarial_loss1.sum(-1).mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum()
-    adversarial_adversary_loss = 0.1 * adversarial_loss2.sum(-1).mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum()
+    adversarial_adversary_loss = 1e-4 * adversarial_loss2.sum(-1).mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum()
     losses['model'] = base_loss + entropy_loss + adversarial_model_loss
     losses['adversary'] = adversarial_adversary_loss
 
