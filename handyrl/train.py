@@ -133,7 +133,7 @@ def make_batch(episodes, args):
     }
 
 
-def forward_prediction(model, hidden, batch, args):
+def forward_prediction(model, adversary, hidden, batch, args):
     """Forward calculation via neural network
 
     Args:
@@ -151,6 +151,7 @@ def forward_prediction(model, hidden, batch, args):
         # feed-forward neural network
         obs = map_r(observations, lambda o: o.view(-1, *o.size()[3:]))
         outputs = model(obs, None)
+        outputs = {**outputs, **{'adversarial_' + k: v for k, v in adversary(obs, None).items()}}
     else:
         # sequential computation with RNN
         outputs = {}
@@ -175,7 +176,7 @@ def forward_prediction(model, hidden, batch, args):
 
     for k, o in outputs.items():
         o = o.view(*batch['turn_mask'].size()[:2], -1, o.size(-1))
-        if k == 'policy':
+        if k.endswith('policy'):
             # gather turn player's policies
             outputs[k] = o.mul(batch['turn_mask']).sum(2, keepdim=True) - batch['action_mask']
         else:
@@ -208,15 +209,24 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
+    # adversary
+    adversarial_loss1 = F.kl_div(F.log_softmax(outputs['policy'], dim=-1), F.softmax(outputs['adversarial_policy'].detach(), dim=-1), reduction='none').mul(tmasks)
+    adversarial_loss2 = F.kl_div(F.log_softmax(outputs['adversarial_policy'], dim=-1), F.softmax(outputs['policy'].detach(), dim=-1), reduction='none').mul(tmasks)
+    losses['ad1'] = adversarial_loss1.sum()
+    losses['ad2'] = adversarial_loss2.sum()
+
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
     entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
-    losses['total'] = base_loss + entropy_loss
+    adversarial_model_loss = -adversarial_loss1.sum(-1).mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum()
+    adversarial_adversary_loss = 0.1 * adversarial_loss2.sum(-1).mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum()
+    losses['model'] = base_loss + entropy_loss + adversarial_model_loss
+    losses['adversary'] = adversarial_adversary_loss
 
     return losses, dcnt
 
 
-def compute_loss(batch, model, hidden, args):
-    outputs = forward_prediction(model, hidden, batch, args)
+def compute_loss(batch, model, adversary, hidden, args):
+    outputs = forward_prediction(model, adversary, hidden, batch, args)
     actions = batch['action']
     emasks = batch['episode_mask']
     clip_rho_threshold, clip_c_threshold = 1.0, 1.0
@@ -317,9 +327,7 @@ class Trainer:
         self.model = model
         self.default_lr = 3e-8
         self.data_cnt_ema = self.args['batch_size'] * self.args['forward_steps']
-        self.params = list(self.model.parameters())
         lr = self.default_lr * self.data_cnt_ema
-        self.optimizer = optim.Adam(self.params, lr=lr, weight_decay=1e-5) if len(self.params) > 0 else None
         self.steps = 0
         self.lock = threading.Lock()
         self.batcher = Batcher(self.args, self.episodes)
@@ -329,8 +337,14 @@ class Trainer:
 
         self.wrapped_model = ModelWrapper(self.model)
         self.trained_model = self.wrapped_model
+        self.adversary = copy.deepcopy(self.wrapped_model)
+        self.trained_adversary = self.adversary
         if self.gpu > 1:
-            self.trained_model = nn.DataParallel(self.wrapped_model)
+            self.trained_model = nn.DataParallel(self.trained_model)
+            self.trained_adversary = nn.DataParallel(self.trained_adversary)
+
+        self.params = list(self.model.parameters()) + list(self.adversary.parameters())
+        self.optimizer = optim.Adam(self.params, lr=lr, weight_decay=1e-5)
 
     def update(self):
         if len(self.episodes) < self.args['minimum_episodes']:
@@ -367,7 +381,9 @@ class Trainer:
         batch_cnt, data_cnt, loss_sum = 0, 0, {}
         if self.gpu > 0:
             self.trained_model.cuda()
+            self.trained_adversary.cuda()
         self.trained_model.train()
+        self.trained_adversary.train()
 
         while data_cnt == 0 or not (self.update_flag or self.shutdown_flag):
             batch = self.batcher.batch()
@@ -378,10 +394,11 @@ class Trainer:
                 batch = to_gpu(batch)
                 hidden = to_gpu(hidden)
 
-            losses, dcnt = compute_loss(batch, self.trained_model, hidden, self.args)
+            losses, dcnt = compute_loss(batch, self.trained_model, self.trained_adversary, hidden, self.args)
 
             self.optimizer.zero_grad()
-            losses['total'].backward()
+            losses['model'].backward()
+            losses['adversary'].backward()
             nn.utils.clip_grad_norm_(self.params, 4.0)
             self.optimizer.step()
 
