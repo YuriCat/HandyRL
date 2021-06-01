@@ -43,7 +43,7 @@ class Worker:
         model_pool = {}
         for model_id in model_ids:
             if model_id not in model_pool:
-                if model_id < 0:
+                if model_id is None:
                     model_pool[model_id] = None
                 elif model_id == self.latest_model[0]:
                     # use latest model
@@ -52,7 +52,7 @@ class Worker:
                     # get model from server
                     model_pool[model_id] = ModelWrapper(pickle.loads(send_recv(self.conn, ('model', model_id))))
                     # update latest model
-                    if model_id > self.latest_model[0]:
+                    if model_id != self.latest_model[0]:
                         self.latest_model = model_id, model_pool[model_id]
         return model_pool
 

@@ -463,7 +463,7 @@ class Learner:
         self.thread.join()
 
     def model_path(self, model_id):
-        return os.path.join('models', str(model_id) + '.pth')
+        return os.path.join('models', model_id + '.pth')
 
     def latest_model_path(self):
         return os.path.join('models', 'latest.pth')
@@ -474,7 +474,7 @@ class Learner:
         self.model_era += 1
         self.model = model
         os.makedirs('models', exist_ok=True)
-        torch.save(model.state_dict(), self.model_path(self.model_era))
+        torch.save(model.state_dict(), self.model_path(str(self.model_era)))
         torch.save(model.state_dict(), self.latest_model_path())
 
     def feed_episodes(self, episodes):
@@ -524,7 +524,8 @@ class Learner:
         print()
         print('epoch %d' % self.model_era)
 
-        if self.model_era not in self.results:
+        model_id = str(self.model_era)
+        if model_id not in self.results:
             print('win rate = Nan (0)')
         else:
             def output_wp(name, results):
@@ -534,16 +535,16 @@ class Learner:
                 print('win rate%s = %.3f (%.1f / %d)' % (name_tag, (mean + 1) / 2, (r + n) / 2, n))
 
             if len(self.args.get('eval', {}).get('opponent', [])) <= 1:
-                output_wp('', self.results[self.model_era])
+                output_wp('', self.results[model_id])
             else:
-                output_wp('total', self.results[self.model_era])
-                for key in sorted(list(self.results_per_opponent[self.model_era])):
-                    output_wp(key, self.results_per_opponent[self.model_era][key])
+                output_wp('total', self.results[model_id])
+                for key in sorted(list(self.results_per_opponent[model_id])):
+                    output_wp(key, self.results_per_opponent[model_id][key])
 
-        if self.model_era not in self.generation_results:
+        if model_id not in self.generation_results:
             print('generation stats = Nan (0)')
         else:
-            n, r, r2 = self.generation_results[self.model_era]
+            n, r, r2 = self.generation_results[model_id]
             mean = r / (n + 1e-6)
             std = (r2 / (n + 1e-6) - mean ** 2) ** 0.5
             print('generation stats = %.3f +- %.3f' % (mean, std))
@@ -586,9 +587,9 @@ class Learner:
                             args['player'] = self.env.players()
                             for p in self.env.players():
                                 if p in args['player']:
-                                    args['model_id'][p] = self.model_era
+                                    args['model_id'][p] = str(self.model_era)
                                 else:
-                                    args['model_id'][p] = -1
+                                    args['model_id'][p] = None
                             self.num_episodes += 1
                             if self.num_episodes % 100 == 0:
                                 print(self.num_episodes, end=' ', flush=True)
@@ -598,9 +599,9 @@ class Learner:
                             args['player'] = [self.env.players()[self.num_results % len(self.env.players())]]
                             for p in self.env.players():
                                 if p in args['player']:
-                                    args['model_id'][p] = self.model_era
+                                    args['model_id'][p] = str(self.model_era)
                                 else:
-                                    args['model_id'][p] = -1
+                                    args['model_id'][p] = None
                             self.num_results += 1
 
                         send_data.append(args)
@@ -618,7 +619,7 @@ class Learner:
                 elif req == 'model':
                     for model_id in data:
                         model = self.model
-                        if model_id != self.model_era:
+                        if model_id != str(self.model_era):
                             try:
                                 model = self.model_class()
                                 model.load_state_dict(torch.load(self.model_path(model_id)), strict=False)
