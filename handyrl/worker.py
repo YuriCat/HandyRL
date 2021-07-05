@@ -61,6 +61,13 @@ class Worker:
             args = send_recv(self.conn, ('args', None))
             role = args['role']
 
+            if role == 'g':
+                args['player'] = [random.choice(args['player'])]
+                args['model_id'] = {
+                    player: (model_id if player in args['player'] else random.randrange(max(1, self.latest_model[0] + 1)))
+                    for player, model_id in args['model_id'].items()
+                }
+
             models = {}
             if 'model_id' in args:
                 model_ids = list(args['model_id'].values())
