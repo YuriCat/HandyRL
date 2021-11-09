@@ -45,12 +45,15 @@ class Agent:
         self.hidden = None
         self.observation = observation
         self.temperature = temperature
+        self.fixed_obs = None
 
     def reset(self, env, show=False):
         self.hidden = self.model.init_hidden()
+        if self.fixed_obs is None:
+            self.fixed_obs = env.fixed_observation()
 
     def plan(self, obs):
-        outputs = self.model.inference(obs, self.hidden)
+        outputs = self.model.inference(obs, self.fixed_obs, self.hidden)
         self.hidden = outputs.pop('hidden', None)
         return outputs
 
@@ -84,6 +87,7 @@ class Agent:
 
 class EnsembleAgent(Agent):
     def reset(self, env, show=False):
+        super().reset(env, show=show)
         self.hidden = [model.init_hidden() for model in self.model]
 
     def plan(self, obs):

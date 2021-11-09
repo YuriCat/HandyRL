@@ -16,6 +16,7 @@ class Generator:
     def __init__(self, env, args):
         self.env = env
         self.args = args
+        self.fixed_obs = self.env.fixed_observation()
 
     def generate(self, models, args):
         # episode generation
@@ -37,7 +38,7 @@ class Generator:
                 if player in turn_players or self.args['observation']:
                     obs = self.env.observation(player)
                     model = models[player]
-                    outputs = model.inference(obs, hidden[player])
+                    outputs = model.inference(obs, self.fixed_obs, hidden[player])
                     hidden[player] = outputs.get('hidden', None)
                     v = outputs.get('value', None)
 

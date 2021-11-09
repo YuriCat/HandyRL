@@ -148,7 +148,7 @@ class GeisterNet(nn.Module):
     def init_hidden(self, batch_size=None):
         return self.body.init_hidden(self.input_size[1:], batch_size)
 
-    def forward(self, x, hidden):
+    def forward(self, x, fixed, hidden):
         b, s = x['board'], x['scalar']
         h_s = s.view(*s.size(), 1, 1).repeat(1, 1, 6, 6)
         h = torch.cat([h_s, b], -3)

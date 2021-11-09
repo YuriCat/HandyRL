@@ -133,7 +133,7 @@ def make_batch(episodes, args):
     }
 
 
-def forward_prediction(model, hidden, batch, args):
+def forward_prediction(model, hidden, fixed, batch, args):
     """Forward calculation via neural network
 
     Args:
@@ -150,7 +150,7 @@ def forward_prediction(model, hidden, batch, args):
     if hidden is None:
         # feed-forward neural network
         obs = map_r(observations, lambda o: o.view(-1, *o.size()[3:]))
-        outputs = model(obs, None)
+        outputs = model(obs, fixed, None)
     else:
         # sequential computation with RNN
         outputs = {}
@@ -163,7 +163,7 @@ def forward_prediction(model, hidden, batch, args):
                 hidden_ = map_r(hidden_, lambda h: h.sum(1))  # (..., B * 1, ...)
             else:
                 hidden_ = map_r(hidden_, lambda h: h.view(-1, *h.size()[2:]))  # (..., B * P, ...)
-            outputs_ = model(obs, hidden_)
+            outputs_ = model(obs, fixed, hidden_)
             for k, o in outputs_.items():
                 if k == 'hidden':
                     next_hidden = outputs_['hidden']
@@ -215,8 +215,8 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     return losses, dcnt
 
 
-def compute_loss(batch, model, hidden, args):
-    outputs = forward_prediction(model, hidden, batch, args)
+def compute_loss(batch, model, fixed, hidden, args):
+    outputs = forward_prediction(model, hidden, fixed, batch, args)
     actions = batch['action']
     emasks = batch['episode_mask']
     clip_rho_threshold, clip_c_threshold = 1.0, 1.0
@@ -310,7 +310,7 @@ class Batcher:
 
 
 class Trainer:
-    def __init__(self, args, model):
+    def __init__(self, args, model, fixed_obs):
         self.episodes = deque()
         self.args = args
         self.gpu = torch.cuda.device_count()
@@ -331,6 +331,10 @@ class Trainer:
         self.trained_model = self.wrapped_model
         if self.gpu > 1:
             self.trained_model = nn.DataParallel(self.wrapped_model)
+
+        self.fixed_obs = fixed_obs
+        if self.gpu > 0:
+            self.fixed_obs = to_gpu(self.fixed_obs)
 
     def update(self):
         if len(self.episodes) < self.args['minimum_episodes']:
@@ -378,7 +382,7 @@ class Trainer:
                 batch = to_gpu(batch)
                 hidden = to_gpu(hidden)
 
-            losses, dcnt = compute_loss(batch, self.trained_model, hidden, self.args)
+            losses, dcnt = compute_loss(batch, self.trained_model, self.fixed_obs, hidden, self.args)
 
             self.optimizer.zero_grad()
             losses['total'].backward()
@@ -454,7 +458,8 @@ class Learner:
         self.worker = WorkerServer(args) if remote else WorkerCluster(args)
 
         # thread connection
-        self.trainer = Trainer(args, train_model)
+        fixed_obs = self.env.fixed_observation()
+        self.trainer = Trainer(args, train_model, fixed_obs)
 
     def shutdown(self):
         self.shutdown_flag = True

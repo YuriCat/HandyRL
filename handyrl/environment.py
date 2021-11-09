@@ -120,6 +120,12 @@ class BaseEnvironment:
         raise NotImplementedError()
 
     #
+    # Should be defined in all games
+    #
+    def fixed_observation(self):
+        return None
+
+    #
     # Should be defined if you encode action as special string
     #
     def action2str(self, a, player=None):
