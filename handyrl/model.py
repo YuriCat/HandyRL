@@ -51,7 +51,7 @@ class ModelWrapper(nn.Module):
         self.eval()
         with torch.no_grad():
             xt = map_r(x, lambda x: torch.from_numpy(np.array(x)).contiguous().unsqueeze(0) if x is not None else None)
-            ft = map_r(fixed, lambda x: torch.from_numpy(np.array(fixed)).contiguous().unsqueeze(0) if x is not None else None)
+            ft = map_r(fixed, lambda x: torch.from_numpy(np.array(fixed)).contiguous() if x is not None else None)
             ht = map_r(hidden, lambda h: torch.from_numpy(np.array(h)).contiguous().unsqueeze(0) if h is not None else None)
             outputs = self.forward(xt, ft, ht, **kwargs)
         return map_r(outputs, lambda o: o.detach().numpy().squeeze(0) if o is not None else None)
