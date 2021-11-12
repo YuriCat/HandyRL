@@ -43,9 +43,9 @@ class Agent:
         # model might be a neural net, or some planning algorithm such as game tree search
         self.model = model
         self.hidden = None
+        self.fixed_obs = None
         self.observation = observation
         self.temperature = temperature
-        self.fixed_obs = None
 
     def reset(self, env, show=False):
         self.hidden = self.model.init_hidden()
