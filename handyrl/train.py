@@ -517,6 +517,10 @@ class Learner:
         print()
         print('epoch %d' % self.model_epoch)
 
+        reward_type = None
+        if hasattr(self.env, 'REWARD_TYPE'):
+            reward_type = self.env.REWARD_TYPE
+
         if self.model_epoch not in self.results:
             print('win rate = Nan (0)')
         else:
@@ -525,7 +529,10 @@ class Learner:
                 mean = r / (n + 1e-6)
                 std = (r2 / (n + 1e-6) - mean ** 2) ** 0.5
                 name_tag = ' (%s)' % name if name != '' else ''
-                print('eval reward%s = %.3f +- %.3f (/ %d)' % (name_tag, mean[0], std[0], n))
+                if reward_type == 'WIN':
+                   print('evaluation win rate%s = %.3f (/ %d)' % (name_tag, (mean[0] + 1) / 2, n))
+                else:
+                   print('evaluation reward%s = %.3f +- %.3f (/ %d)' % (name_tag, mean[0], std[0], n))
 
             if len(self.args.get('eval', {}).get('opponent', [])) <= 1:
                 output_wp('', self.results[self.model_epoch])
@@ -540,7 +547,10 @@ class Learner:
             n, r, r2 = self.generation_results[self.model_epoch]
             mean = r / (n + 1e-6)
             std = (r2 / (n + 1e-6) - mean ** 2) ** 0.5
-            print('gen  reward = %.3f +- %.3f (/ %d)' % (mean[0], std[0], n))
+            if reward_type == 'WIN':
+                print('generation win rate = %.3f (/ %d)' % ((mean[0] + 1) / 2, n))
+            else:
+                print('generation reward = %.3f +- %.3f (/ %d)' % (mean[0], std[0], n))
 
         model, steps = self.trainer.update()
         if model is None:

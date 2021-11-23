@@ -70,6 +70,8 @@ class SimpleConv2dModel(nn.Module):
 
 
 class Environment(BaseEnvironment):
+    REWARD_TYPE = 'WIN'
+
     X, Y = 'ABC',  '123'
     BLACK, WHITE = 1, -1
     C = {0: '_', BLACK: 'O', WHITE: 'X'}
