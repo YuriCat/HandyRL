@@ -66,7 +66,7 @@ class MonteCarloTree:
         selected_action = np.argmax(ucb)
 
         # Search next state by recursively calling this function
-        next_rp = self.model['dynamics'].inference(rp, np.array([selected_action]))
+        next_rp, _ = self.model['dynamics'].inference(rp, np.array([selected_action]))
         path.append(selected_action)
         q_new = self.search(next_rp, path)
         node.update(selected_action, q_new)

@@ -210,6 +210,8 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
         losses['pv'] = ((outputs['value'] - batch['outcome']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
         losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
+    if 'reward' in outputs:
+        losses['rw'] = F.smooth_l1_loss(outputs['reward'], batch['reward'], reduction='none').mul(omasks).sum()
 
     entropy = dist.Categorical(logits=outputs['policy'] - batch['action_mask']).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()

@@ -128,20 +128,27 @@ class MuZero(nn.Module):
             self.action_embedding = nn.Embedding(num_players * action_length, embedding_dim=np.prod(self.action_shape))
             self.layer0 = Conv(filters + action_filters, filters, 3, bn=True)
             self.blocks = nn.ModuleList([ResidualBlock(filters, filters) for _ in range(layers)])
+            self.block_weights = nn.Parameter(torch.FloatTensor([0] * layers))
+            self.head_r = Head(rp_shape, 2, num_players)
 
         def forward(self, rp, a):
             arp = self.action_embedding(a).view(-1, *self.action_shape)
             h = torch.cat([rp, arp], dim=1)
             h = F.relu_(self.layer0(h))
-            for block in self.blocks:
+            h_w = torch.zeros_like(h)
+            block_weights = F.softmax(self.block_weights, 0)
+            for i, block in enumerate(self.blocks):
                 h = block(h)
-            return h
+                h_w = h_w + block_weights[i] * h
+            r = self.head_r(h_w)
+
+            return h, r
 
         def inference(self, rp, a):
             self.eval()
             with torch.no_grad():
-                rp = self(to_torch(rp).unsqueeze(0), to_torch(a).unsqueeze(0))
-            return rp.cpu().numpy().squeeze(0)
+                rp, r = self(to_torch(rp).unsqueeze(0), to_torch(a).unsqueeze(0))
+            return rp.cpu().numpy().squeeze(0), r.cpu().numpy().squeeze(0)
 
     def __init__(self, env, obs, action_length):
         super().__init__()
@@ -175,8 +182,10 @@ class MuZero(nn.Module):
         outputs = {'policy': p, 'value': v}
 
         if action is not None:
-            next_rp = self.nets['dynamics'](rp, action)
+            next_rp, r = self.nets['dynamics'](rp, action)
             outputs['hidden'] = {'representation': next_rp}
+            outputs['reward'] = r
+
         return outputs
 
     def inference(self, x, hidden=None, num_simulations=30):
