@@ -520,7 +520,8 @@ class Learner:
         print()
         print('epoch %d' % self.model_epoch)
 
-        if self.model_epoch not in self.results:
+        output_model_epoch = self.model_epoch - 1
+        if output_model_epoch not in self.results:
             print('win rate = Nan (0)')
         else:
             def output_wp(name, results):
@@ -530,19 +531,19 @@ class Learner:
                 print('win rate%s = %.3f (%.1f / %d)' % (name_tag, (mean + 1) / 2, (r + n) / 2, n))
 
             if len(self.args.get('eval', {}).get('opponent', [])) <= 1:
-                output_wp('', self.results[self.model_epoch])
+                output_wp('', self.results[output_model_epoch])
             else:
-                output_wp('total', self.results[self.model_epoch])
-                for key in sorted(list(self.results_per_opponent[self.model_epoch])):
-                    output_wp(key, self.results_per_opponent[self.model_epoch][key])
+                output_wp('total', self.results[output_model_epoch])
+                for key in sorted(list(self.results_per_opponent[output_model_epoch])):
+                    output_wp(key, self.results_per_opponent[output_model_epoch][key])
 
-        if self.model_epoch not in self.generation_results:
+        if output_model_epoch not in self.generation_results:
             print('generation stats = Nan (0)')
         else:
-            n, r, r2 = self.generation_results[self.model_epoch]
+            n, r, r2 = self.generation_results[output_model_epoch]
             mean = r / (n + 1e-6)
             std = (r2 / (n + 1e-6) - mean ** 2) ** 0.5
-            print('generation stats = %.3f +- %.3f' % (mean, std))
+            print('generation stats = %.3f +- %.3f (%d)' % (mean, std, n))
 
         model, steps = self.trainer.update()
         if model is None:
