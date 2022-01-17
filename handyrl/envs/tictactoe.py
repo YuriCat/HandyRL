@@ -73,8 +73,12 @@ class SimpleConv2dModel(nn.Module):
         entropy = dist.Categorical(logits=log_prob).entropy().unsqueeze(-1)
 
         if action is None:
-            action = prob.multinomial(num_samples=1, replacement=True)
-        selected_prob = prob.gather(-1, action)
+            az = prob.multinomial(num_samples=1, replacement=True)
+            action = torch.cat([torch.div(az, 3).int(), az % 3], -1)
+        else:
+            az = action[:, :1] * 3 + action[:, 1:]
+
+        selected_prob = prob.gather(-1, az)
 
         return {'action': action, 'selected_prob': selected_prob, 'value': torch.tanh(h_v), 'entropy': entropy}
 
@@ -112,8 +116,8 @@ class Environment(BaseEnvironment):
 
     def play(self, action, _=None):
         # state transition function
-        # action is integer (0 ~ 8)
-        x, y = action // 3, action % 3
+        # action is (integer, integer)
+        x, y = action
         if self.board[x, y] != 0:  # illegal action
             self.win_color = -self.color
         else:
@@ -161,7 +165,7 @@ class Environment(BaseEnvironment):
 
     def legal_actions(self, _=None):
         # legal action list
-        return [a for a in range(3 * 3) if self.board[a // 3, a % 3] == 0]
+        return [(x, y) for x in range(3) for y in range(3) if self.board[x, y] == 0]
 
     def players(self):
         return [0, 1]
