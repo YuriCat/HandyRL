@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..environment import BaseEnvironment
+from handyrl import BaseEnvironment
 
 
 class Conv(nn.Module):
