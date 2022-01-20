@@ -17,22 +17,22 @@ if __name__ == '__main__':
     mode = sys.argv[1]
 
     if mode == '--train' or mode == '-t':
-        from handyrl.train import train_main as main
+        from handyrl import train_main as main
         main(args)
     elif mode == '--train-server' or mode == '-ts':
-        from handyrl.train import train_server_main as main
+        from handyrl import train_server_main as main
         main(args)
     elif mode == '--worker' or mode == '-w':
-        from handyrl.worker import worker_main as main
+        from handyrl import worker_main as main
         main(args)
     elif mode == '--eval' or mode == '-e':
-        from handyrl.evaluation import eval_main as main
+        from handyrl import eval_main as main
         main(args, sys.argv[2:])
     elif mode == '--eval-server' or mode == '-es':
-        from handyrl.evaluation import eval_server_main as main
+        from handyrl import eval_server_main as main
         main(args, sys.argv[2:])
     elif mode == '--eval-client' or mode == '-ec':
-        from handyrl.evaluation import eval_client_main as main
+        from handyrl import eval_client_main as main
         main(args, sys.argv[2:])
     else:
         print('Not found mode %s.' % mode)
