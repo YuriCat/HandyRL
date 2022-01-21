@@ -164,8 +164,8 @@ def forward_prediction(model, hidden, batch, args):
     for k, o in outputs.items():
         o = o.view(*batch['turn_mask'].size()[:2], -1, o.size(-1))
         if k == 'policy':
-            # gather turn player's policies
-            outputs[k] = o.mul(batch['turn_mask']).sum(2, keepdim=True) - batch['action_mask']
+            # apply legal action mask
+            outputs[k] = o.mul(batch['turn_mask']) - batch['action_mask']
         else:
             # mask valid target values and cumulative rewards
             outputs[k] = o.mul(batch['observation_mask'])
