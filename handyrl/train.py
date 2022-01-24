@@ -468,9 +468,14 @@ class Learner:
                 continue
             for p in episode['args']['player']:
                 model_id = episode['args']['model_id'][p]
-                outcome = episode['outcome'][p]
-                n, r, r2 = self.generation_results.get(model_id, (0, 0, 0))
-                self.generation_results[model_id] = n + 1, r + outcome, r2 + outcome ** 2
+                for key in ['outcome', 'reward']:
+                    if key not in episode:
+                        continue
+                    if key not in self.generation_results:
+                        self.generation_results[key] = {}
+                    v = episode[key][p]
+                    n, s, s2 = self.generation_results[key].get(model_id, (0, 0, 0))
+                    self.generation_results[key][model_id] = n + 1, s + v, s2 + v ** 2
 
         # store generated episodes
         self.trainer.episodes.extend([e for e in episodes if e is not None])
@@ -493,22 +498,29 @@ class Learner:
                 continue
             for p in result['args']['player']:
                 model_id = result['args']['model_id'][p]
-                res = result['outcome'][p]
-                n, r, r2 = self.results.get(model_id, (0, 0, 0))
-                self.results[model_id] = n + 1, r + res, r2 + res ** 2
+                for key in ['outcome', 'reward']:
+                    if key not in result:
+                        continue
+                    if key not in self.results:
+                        self.results[key] = {}
+                    v = result[key][p]
+                    n, s, s2 = self.results[key].get(model_id, (0, 0, 0))
+                    self.results[key][model_id] = n + 1, s + v, s2 + v ** 2
 
-                if model_id not in self.results_per_opponent:
-                    self.results_per_opponent[model_id] = {}
-                opponent = result['opponent']
-                n, r, r2 = self.results_per_opponent[model_id].get(opponent, (0, 0, 0))
-                self.results_per_opponent[model_id][opponent] = n + 1, r + res, r2 + res ** 2
+                    if key not in self.results_per_opponent:
+                        self.results_per_opponent[key] = {}
+                    if model_id not in self.results_per_opponent[key]:
+                        self.results_per_opponent[key][model_id] = {}
+                    opponent = result['opponent']
+                    n, s, s2 = self.results_per_opponent[key][model_id].get(opponent, (0, 0, 0))
+                    self.results_per_opponent[key][model_id][opponent] = n + 1, s + v, s2 + v ** 2
 
     def update(self):
         # call update to every component
         print()
         print('epoch %d' % self.model_epoch)
 
-        if self.model_epoch not in self.results:
+        if self.model_epoch not in self.results.get('outcome', {}):
             print('win rate = Nan (0)')
         else:
             def output_wp(name, results):
@@ -518,16 +530,16 @@ class Learner:
                 print('win rate%s = %.3f (%.1f / %d)' % (name_tag, (mean + 1) / 2, (r + n) / 2, n))
 
             if len(self.args.get('eval', {}).get('opponent', [])) <= 1:
-                output_wp('', self.results[self.model_epoch])
+                output_wp('', self.results['outcome'][self.model_epoch])
             else:
-                output_wp('total', self.results[self.model_epoch])
-                for key in sorted(list(self.results_per_opponent[self.model_epoch])):
-                    output_wp(key, self.results_per_opponent[self.model_epoch][key])
+                output_wp('total', self.results['oucome'][self.model_epoch])
+                for key in sorted(list(self.results_per_opponent['outcome'][self.model_epoch])):
+                    output_wp(key, self.results_per_opponent['outcome'][self.model_epoch][key])
 
-        if self.model_epoch not in self.generation_results:
+        if self.model_epoch not in self.generation_results.get('outcome', {}):
             print('generation stats = Nan (0)')
         else:
-            n, r, r2 = self.generation_results[self.model_epoch]
+            n, r, r2 = self.generation_results['outcome'][self.model_epoch]
             mean = r / (n + 1e-6)
             std = (r2 / (n + 1e-6) - mean ** 2) ** 0.5
             print('generation stats = %.3f +- %.3f' % (mean, std))
