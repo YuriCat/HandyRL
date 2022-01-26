@@ -45,7 +45,15 @@ class ModelWrapper(nn.Module):
         return None
 
     def forward(self, *args, **kwargs):
-        return self.model.forward(*args, **kwargs)
+        burn_in = kwargs.pop('burn_in', False)
+        if burn_in:
+             self.model.eval()
+             with torch.no_grad():
+                 return self.model.forward(*args, **kwargs)
+        else:
+             if not self.model.training:
+                 self.model.train()
+             return self.model.forward(*args, **kwargs)
 
     def inference(self, x, hidden, **kwargs):
         # numpy array -> numpy array
