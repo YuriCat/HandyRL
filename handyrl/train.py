@@ -258,7 +258,6 @@ def compute_loss(batch, model, hidden, args):
         _, advantages['return'] = compute_target(args['policy_target'], *return_args)
 
     # compute policy advantage
-    print(clipped_rhos.size(), list(advantages.values())[0].size())
     total_advantages = clipped_rhos * sum(advantages.values())
 
     return compose_losses(outputs, log_selected_t_policies, total_advantages, targets, batch, args)
