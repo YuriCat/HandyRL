@@ -76,10 +76,10 @@ def make_batch(episodes, args):
         obs = bimap_r(obs_zeros, obs, lambda _, o: np.array(o))
 
         # datum that is not changed by training configuration
-        v = np.array([[replace_none(m['value'][player], [0]) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
-        rew = np.array([[replace_none(m['reward'][player], [0]) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
-        ret = np.array([[replace_none(m['return'][player], [0]) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
-        oc = np.array([ep['outcome'][player] for player in players], dtype=np.float32).reshape(1, len(players), -1)
+        v = np.array([[replace_none(m['value'][player], [0]) for player in players] for m in moments], dtype=np.float32)
+        rew = np.array([[replace_none(m['reward'][player], [0]) for player in players] for m in moments], dtype=np.float32)
+        ret = np.array([[replace_none(m['return'][player], [0]) for player in players] for m in moments], dtype=np.float32)
+        oc = np.array([ep['outcome'][player] for player in players], dtype=np.float32).reshape(1, *v.shape[1:])
 
         emask = np.ones((len(moments), 1, 1), dtype=np.float32)  # episode mask
         tmask = np.array([[[m['selected_prob'][player] is not None] for player in players] for m in moments], dtype=np.float32)
@@ -94,10 +94,10 @@ def make_batch(episodes, args):
             pad_len_a = batch_steps - len(tmask) - pad_len_b
             obs = map_r(obs, lambda o: np.pad(o, [(pad_len_b, pad_len_a)] + [(0, 0)] * (len(o.shape) - 1), 'constant', constant_values=0))
             prob = np.pad(prob, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=1)
-            v = np.concatenate([np.pad(v, [(pad_len_b, 0), (0, 0), (0, 0)], 'constant', constant_values=0), np.tile(oc, [pad_len_a, 1, 1])])
-            act = np.pad(act, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
-            rew = np.pad(rew, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
-            ret = np.pad(ret, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
+            v = np.concatenate([np.pad(v, [(pad_len_b, 0)] + [(0, 0)] * (v.ndim - 1), 'constant', constant_values=0), np.tile(oc, [pad_len_a] + [1] * (oc.ndim - 1))])
+            act = np.pad(act, [(pad_len_b, pad_len_a)] + [(0, 0)] * (act.ndim - 1), 'constant', constant_values=0)
+            rew = np.pad(rew, [(pad_len_b, pad_len_a)] + [(0, 0)] * (rew.ndim - 1), 'constant', constant_values=0)
+            ret = np.pad(ret, [(pad_len_b, pad_len_a)] + [(0, 0)] * (ret.ndim - 1), 'constant', constant_values=0)
             emask = np.pad(emask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             tmask = np.pad(tmask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             omask = np.pad(omask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
@@ -120,6 +120,10 @@ def make_batch(episodes, args):
         'action_mask': amask,
         'progress': progress,
     }
+
+
+def apply_mask(x, mask):
+    return map_r(x, lambda y: y * mask.view(*mask.size(), *([-1] * (y.dim() - mask.dim()))))
 
 
 def forward_prediction(model, hidden, batch, args):
@@ -145,9 +149,8 @@ def forward_prediction(model, hidden, batch, args):
         outputs = {}
         for t in range(batch['turn_mask'].size(1)):
             obs = map_r(observations, lambda o: o[:, t].reshape(-1, *o.size()[3:]))  # (..., B * P, ...)
-            omask_ = batch['observation_mask'][:, t]
-            omask = map_r(hidden, lambda h: omask_.view(*h.size()[:2], *([1] * (len(h.size()) - 2))))
-            hidden_ = bimap_r(hidden, omask, lambda h, m: h * m)  # (..., B, P, ...)
+            hidden_ = apply_mask(hidden, batch['observation_mask'][:, t]) # (..., B, P, ...)
+            hidden_ = bimap_r(hidden, lambda h: h.flatten(0, 1))  # (..., B, P, ...)
             if args['turn_based_training'] and not args['observation']:
                 hidden_ = map_r(hidden_, lambda h: h.sum(1))  # (..., B * 1, ...)
             else:
@@ -166,17 +169,19 @@ def forward_prediction(model, hidden, batch, args):
                 else:
                     outputs[k] = outputs.get(k, []) + [o]
             next_hidden = bimap_r(next_hidden, hidden, lambda nh, h: nh.view(h.size(0), -1, *h.size()[2:]))  # (..., B, P or 1, ...)
-            hidden = trimap_r(hidden, next_hidden, omask, lambda h, nh, m: h * (1 - m) + nh * m)
+            hidden_ = apply_mask(hidden, 1 - omask)
+            next_hidden_ = apply_mask(next_hidden, omask)
+            hidden = bimap_r(hidden_, next_hidden_, lambda h, nh: h + nh)
         outputs = {k: torch.stack(o, dim=1) for k, o in outputs.items() if o[0] is not None}
 
     for k, o in outputs.items():
-        o = o.view(*batch['turn_mask'].size()[:2], -1, o.size(-1))
+        o = o.view(*batch['action'].size()[:3], *o.size()[1:])
         if k == 'policy':
             # gather turn player's policies
-            outputs[k] = o.mul(batch['turn_mask']).sum(2, keepdim=True) - batch['action_mask']
+            outputs[k] = apply_mask(o, batch['turn_mask']).sum(2, keepdim=True) - batch['action_mask']
         else:
             # mask valid target values and cumulative rewards
-            outputs[k] = o.mul(batch['observation_mask'])
+            outputs[k] = apply_mask(o, batch['observation_mask'])
 
     return outputs
 
@@ -193,15 +198,15 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
 
     losses = {}
     dcnt = tmasks.sum().item()
-    turn_advantages = total_advantages.mul(tmasks).sum(2, keepdim=True)
+    turn_advantages = apply_mask(total_advantages, tmasks).sum(2, keepdim=True)
 
     losses['p'] = (-log_selected_policies * turn_advantages).sum()
     if 'value' in outputs:
-        losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
+        losses['v'] = apply_mask((outputs['value'] - targets['value']) ** 2, omasks).sum() / 2
     if 'return' in outputs:
-        losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
+        losses['r'] = apply_mask(F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none'), omasks).sum()
 
-    entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
+    entropy = apply_mask(dist.Categorical(logits=outputs['policy']).entropy().unsqueeze(-1), tmasks)
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
@@ -221,8 +226,8 @@ def compute_loss(batch, model, hidden, args):
     emasks = batch['episode_mask']
     clip_rho_threshold, clip_c_threshold = 1.0, 1.0
 
-    log_selected_b_policies = torch.log(torch.clamp(batch['selected_prob'], 1e-16, 1)) * emasks
-    log_selected_t_policies = F.log_softmax(outputs['policy'], dim=-1).gather(-1, actions) * emasks
+    log_selected_b_policies = apply_mask(torch.log(torch.clamp(batch['selected_prob'], 1e-16, 1)), emasks)
+    log_selected_t_policies = apply_mask(F.log_softmax(outputs['policy'], dim=-1).gather(-1, actions), emasks)
 
     # thresholds of importance sampling
     log_rhos = log_selected_t_policies.detach() - log_selected_b_policies
@@ -235,8 +240,8 @@ def compute_loss(batch, model, hidden, args):
         values_nograd = outputs_nograd['value']
         if args['turn_based_training'] and values_nograd.size(2) == 2:  # two player zerosum game
             values_nograd_opponent = -torch.stack([values_nograd[:, :, 1], values_nograd[:, :, 0]], dim=2)
-            values_nograd = (values_nograd + values_nograd_opponent) / (batch['observation_mask'].sum(dim=2, keepdim=True) + 1e-8)
-        outputs_nograd['value'] = values_nograd * emasks + batch['outcome'] * (1 - emasks)
+            values_nograd = apply_mask(values_nograd + values_nograd_opponent, 1 / (batch['observation_mask'].sum(dim=2, keepdim=True) + 1e-8))
+        outputs_nograd['value'] = apply_mask(values_nograd, emasks) + apply_mask(batch['outcome'], 1 - emasks)
 
     # compute targets and advantage
     targets = {}
@@ -253,6 +258,7 @@ def compute_loss(batch, model, hidden, args):
         _, advantages['return'] = compute_target(args['policy_target'], *return_args)
 
     # compute policy advantage
+    print(clipped_rhos.size(), list(advantages.values())[0].size())
     total_advantages = clipped_rhos * sum(advantages.values())
 
     return compose_losses(outputs, log_selected_t_policies, total_advantages, targets, batch, args)
