@@ -14,6 +14,10 @@ import torch.nn.functional as F
 from ..environment import BaseEnvironment
 
 
+def sigplus(x):
+    return torch.sigmoid(x) * F.softplus(x)
+
+
 class Conv(nn.Module):
     def __init__(self, filters0, filters1, kernel_size, bn, bias=True):
         super().__init__()
@@ -40,11 +44,10 @@ class Head(nn.Module):
         self.out_filters = out_filters
 
         self.conv = Conv(input_size[0], out_filters, 1, bn=False)
-        self.activation = nn.LeakyReLU(0.1)
         self.fc = nn.Linear(self.board_size * out_filters, outputs, bias=False)
 
     def forward(self, x):
-        h = self.activation(self.conv(x))
+        h = sigplus(self.conv(x))
         h = self.fc(h.view(-1, self.board_size * self.out_filters))
         return h
 
@@ -62,7 +65,7 @@ class SimpleConv2dModel(nn.Module):
     def forward(self, x, hidden=None):
         h = F.relu(self.conv(x))
         for block in self.blocks:
-            h = F.relu(block(h))
+            h = sigplus(block(h))
         h_p = self.head_p(h)
         h_v = self.head_v(h)
 
