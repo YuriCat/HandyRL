@@ -66,7 +66,7 @@ class SimpleConv2dModel(nn.Module):
         h_p = self.head_p(h)
         h_v = self.head_v(h)
 
-        return {'policy': h_p, 'value': torch.tanh(h_v)}
+        return {'policy': h_p, 'value': torch.arctan(h_v)}
 
 
 class Environment(BaseEnvironment):
