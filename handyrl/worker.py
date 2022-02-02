@@ -165,8 +165,8 @@ def gather_loop(args, conn, gather_id):
 
     if conn is None:
         # entry
-        conn = connect_socket_connection(args['worker']['server_address'], 9998)
-        conn.send(args['worker'])
+        conn = connect_websocket_connection(args['worker']['tunnel_address'], 8081)
+        conn.send(('entry', args['worker']))
         args = conn.recv()
 
         if gather_id == 0:  # call once at every machine
@@ -211,13 +211,6 @@ class WorkerServer(QueueCommunicator):
             while not self.shutdown_flag:
                 conn = next(conn_acceptor)
                 if conn is not None:
-                    worker_args = conn.recv()
-                    print('accepted connection from %s!' % worker_args['address'])
-                    worker_args['base_worker_id'] = self.total_worker_count
-                    self.total_worker_count += worker_args['num_parallel_per_gather']
-                    args = copy.deepcopy(self.args)
-                    args['worker'] = worker_args
-                    conn.send(args)
                     self.add_connection(conn)
             print('finished worker server')
 
@@ -249,7 +242,76 @@ class RemoteWorkerCluster:
                 p.terminate()
 
 
+import base64
+import queue
+import socket
+from websocket import create_connection
+from websocket_server import WebsocketServer
+
+
+class WebsocketConnection:
+    def __init__(self, conn):
+        self.conn = conn
+
+    @staticmethod
+    def dumps(data):
+        return base64.b85encode(pickle.dumps(data))
+
+    @staticmethod
+    def loads(message):
+        return pickle.loads(base64.b85decode(message))
+
+    def send(self, data):
+        message = self.dumps(data)
+        self.conn.send(message)
+
+    def recv(self):
+        message = self.conn.recv()
+        return self.loads(message)
+
+    def close(self):
+        self.conn.close()
+
+
+def connect_websocket_connection(host, port):
+    host = socket.gethostbyname(host)
+    conn = create_connection('ws://%s:%d' % (host, port))
+    return WebsocketConnection(conn)
+
+
+class TunnelServer(WebsocketServer):
+    def __init__(self, args):
+        super().__init__(port=8081, host='127.0.0.1')
+        self.args = args
+        self.lock = threading.Lock()
+
+    def run(self):
+        self.conn = connect_socket_connection(self.args['worker']['server_address'], 9998)
+
+        self.set_fn_new_client(self._new_client)
+        self.set_fn_message_received(self._message_received)
+        self.run_forever()
+
+    @staticmethod
+    def _new_client(client, server):
+        print('New client {}:{} has joined.'.format(client['address'][0], client['address'][1]))
+
+    @staticmethod
+    def _message_received(client, server, message):
+        data = WebsocketConnection.loads(message)
+        server.lock.acquire()
+        reply_data= send_recv(server.conn, data)
+        server.lock.release()
+        reply_message = WebsocketConnection.dumps(reply_data)
+        server.send_message(client, reply_message)
+
+
 def worker_main(args):
     # offline generation worker
     worker = RemoteWorkerCluster(args=args['worker_args'])
+    worker.run()
+
+def worker_tunnel_main(args):
+    # offline generation worker
+    worker = TunnelServer(args={'worker': args['worker_args']})
     worker.run()

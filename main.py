@@ -25,6 +25,9 @@ if __name__ == '__main__':
     elif mode == '--worker' or mode == '-w':
         from handyrl.worker import worker_main as main
         main(args)
+    elif mode == '--worker-tunnel' or mode == '-wt':
+        from handyrl.worker import worker_tunnel_main as main
+        main(args)
     elif mode == '--eval' or mode == '-e':
         from handyrl.evaluation import eval_main as main
         main(args, sys.argv[2:])

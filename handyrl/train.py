@@ -452,6 +452,7 @@ class Learner:
 
         # multiprocess or remote connection
         self.worker = WorkerServer(args) if remote else WorkerCluster(args)
+        self.remote_worker_count = 0
 
         # thread connection
         self.trainer = Trainer(args, self.model)
@@ -571,7 +572,16 @@ class Learner:
                     data = [data]
                 send_data = []
 
-                if req == 'args':
+                if req == 'entry':
+                    for worker_args in data:
+                        print('accepted connection from %s!' % worker_args['address'])
+                        worker_args['base_worker_id'] = self.remote_worker_count
+                        self.remote_worker_count += worker_args['num_parallel_per_gather']
+                        args = copy.deepcopy(self.args)
+                        args['worker'] = worker_args
+                        send_data.append(args)
+
+                elif req == 'args':
                     for _ in data:
                         args = {'model_id': {}}
 
