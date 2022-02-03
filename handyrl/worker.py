@@ -300,7 +300,7 @@ class TunnelServer(WebsocketServer):
     def _message_received(client, server, message):
         data = WebsocketConnection.loads(message)
         server.lock.acquire()
-        reply_data= send_recv(server.conn, data)
+        reply_data = send_recv(server.conn, data)
         server.lock.release()
         reply_message = WebsocketConnection.dumps(reply_data)
         server.send_message(client, reply_message)
