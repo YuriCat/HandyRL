@@ -283,14 +283,30 @@ class TunnelServer(WebsocketServer):
     def __init__(self, args):
         super().__init__(port=8081, host='0.0.0.0')
         self.args = args
-        self.lock = threading.Lock()
+        self.queue = queue.Queue()
 
     def run(self):
-        self.conn = connect_socket_connection(self.args['worker']['server_address'], 9998)
+        threads = []
+        for _ in range(8):
+            threads.append(threading.Thread(target=self._thread, args=()))
+        for thread in threads:
+            thread.start()
 
         self.set_fn_new_client(self._new_client)
         self.set_fn_message_received(self._message_received)
         self.run_forever()
+
+    def _thread(self):
+        conn = connect_socket_connection(self.args['worker']['server_address'], 9998)
+        while True:
+            try:
+                client, message = self.queue.get(timeout=0.3)
+            except queue.Empty:
+                continue
+            data = WebsocketConnection.loads(message)
+            reply_data = send_recv(conn, data)
+            reply_message = WebsocketConnection.dumps(reply_data)
+            self.send_message(client, reply_message)
 
     @staticmethod
     def _new_client(client, server):
@@ -298,12 +314,8 @@ class TunnelServer(WebsocketServer):
 
     @staticmethod
     def _message_received(client, server, message):
-        data = WebsocketConnection.loads(message)
-        server.lock.acquire()
-        reply_data = send_recv(server.conn, data)
-        server.lock.release()
-        reply_message = WebsocketConnection.dumps(reply_data)
-        server.send_message(client, reply_message)
+        server.queue.put((client, message))
+
 
 
 def worker_main(args):
