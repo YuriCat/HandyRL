@@ -281,7 +281,7 @@ def connect_websocket_connection(host, port):
 
 class TunnelServer(WebsocketServer):
     def __init__(self, args):
-        super().__init__(port=8081, host='127.0.0.1')
+        super().__init__(port=8081, host='0.0.0.0')
         self.args = args
         self.lock = threading.Lock()
 
