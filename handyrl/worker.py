@@ -306,7 +306,10 @@ class TunnelServer(WebsocketServer):
             data = WebsocketConnection.loads(message)
             reply_data = send_recv(conn, data)
             reply_message = WebsocketConnection.dumps(reply_data)
-            self.send_message(client, reply_message)
+            try:
+                self.send_message(client, reply_message)
+            except ConnectionError:
+                continue
 
     @staticmethod
     def _new_client(client, server):
