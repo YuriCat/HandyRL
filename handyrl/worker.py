@@ -287,7 +287,7 @@ class TunnelServer(WebsocketServer):
 
     def run(self):
         threads = []
-        for _ in range(8):
+        for _ in range(2):
             threads.append(threading.Thread(target=self._thread, args=()))
         for thread in threads:
             thread.start()
