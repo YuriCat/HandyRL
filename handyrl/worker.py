@@ -323,7 +323,7 @@ def worker_main(args):
     worker = RemoteWorkerCluster(args=args['worker_args'])
     worker.run()
 
-def worker_tunnel_main(args):
+def tunnel_worker_main(args):
     # offline generation worker
     worker = TunnelServer(args={'worker': args['worker_args']})
     worker.run()
