@@ -239,9 +239,7 @@ class QueueCommunicator:
                 continue
             try:
                 conn.send(send_data)
-            except ConnectionResetError:
-                self.disconnect(conn)
-            except BrokenPipeError:
+            except ConnectionError:
                 self.disconnect(conn)
 
     def _recv_thread(self):
