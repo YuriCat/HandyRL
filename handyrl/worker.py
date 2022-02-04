@@ -287,7 +287,7 @@ class TunnelServer(WebsocketServer):
 
     def run(self):
         threads = []
-        for _ in range(2):
+        for _ in range(self.args.get('num_threads', 2)):
             threads.append(threading.Thread(target=self._thread, args=()))
         for thread in threads:
             thread.start()
@@ -297,7 +297,7 @@ class TunnelServer(WebsocketServer):
         self.run_forever()
 
     def _thread(self):
-        conn = connect_socket_connection(self.args['worker']['server_address'], 9998)
+        conn = connect_socket_connection(self.args['server_address'], 9998)
         while True:
             try:
                 client, message = self.queue.get(timeout=0.3)
@@ -328,5 +328,5 @@ def worker_main(args):
 
 def tunnel_worker_main(args):
     # offline generation worker
-    worker = TunnelServer(args={'worker': args['worker_args']})
+    worker = TunnelServer(args=args['tunnel_args'])
     worker.run()

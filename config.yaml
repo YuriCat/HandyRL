@@ -31,9 +31,11 @@ train_args:
     seed: 0
     restart_epoch: 0
 
+tunnel_args:
+    server_address: ''
+    num_threads: 2
 
 worker_args:
-    server_address: ''
     tunnel_address: ''
     num_parallel: 8
 
