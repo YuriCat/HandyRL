@@ -12,6 +12,7 @@ from collections import deque
 import multiprocessing as mp
 import pickle
 import copy
+import bz2
 
 from .environment import prepare_env, make_env
 from .connection import QueueCommunicator
@@ -50,7 +51,8 @@ class Worker:
                     model_pool[model_id] = self.latest_model[1]
                 else:
                     # get model from server
-                    model = pickle.loads(send_recv(self.conn, ('model', model_id)))
+                    model = send_recv(self.conn, ('model', model_id))
+                    model = pickle.loads(bz2.decompress(model))
                     if model_id == 0:
                         # use random model
                         self.env.reset()

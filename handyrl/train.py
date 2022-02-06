@@ -625,7 +625,7 @@ class Learner:
                             except:
                                 # return latest model if failed to load specified model
                                 pass
-                        send_data.append(pickle.dumps(model))
+                        send_data.append(bz2.compress(pickle.dumps(model)))
 
                 if not multi_req and len(send_data) == 1:
                     send_data = send_data[0]
