@@ -212,11 +212,11 @@ class WebsocketConnection:
 
     @staticmethod
     def dumps(data):
-        return base64.b64encode(pickle.dumps(data))
+        return base64.b64encode(bz2.compress(pickle.dumps(data)))
 
     @staticmethod
     def loads(message):
-        return pickle.loads(base64.b64decode(message))
+        return pickle.loads(bz2.decompress(base64.b64decode(message)))
 
     def send(self, data):
         message = self.dumps(data)
