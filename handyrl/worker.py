@@ -199,6 +199,7 @@ class WorkerCluster(QueueCommunicator):
             self.add_connection(conn0)
 
 
+import bz2
 import base64
 import queue
 import socket
