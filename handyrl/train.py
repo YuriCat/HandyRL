@@ -565,7 +565,10 @@ class Learner:
             # no update call before storing minimum number of episodes + 1 age
             next_update_episodes = prev_update_episodes + self.args['update_episodes']
             while not self.shutdown_flag and self.num_episodes < next_update_episodes:
-                conn, (req, data) = self.worker.recv()
+                message = self.worker.recv()
+                if message is None:
+                    continue
+                conn, (req, data) = message
                 multi_req = isinstance(data, list)
                 if not multi_req:
                     data = [data]

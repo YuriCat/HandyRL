@@ -218,7 +218,13 @@ class QueueCommunicator:
             thread.join()
 
     def recv(self):
-        return self.input_queue.get()
+        while not self.shutdown_flag:
+            print(self.shutdown_flag)
+            try:
+                return self.input_queue.get(timeout=0.3)
+            except queue.Empty:
+                pass
+        return None
 
     def send(self, conn, send_data):
         self.output_queue.put((conn, send_data))
