@@ -429,9 +429,12 @@ class Learner:
         self.args = args
         random.seed(args['seed'])
 
-        self.env = make_env(env_args)
+        # generation / evaluation ratio
         eval_modify_rate = (args['update_episodes'] ** 0.85) / args['update_episodes']
-        self.eval_rate = max(args['eval_rate'], eval_modify_rate)
+        self.eval_rate = max(0.1, eval_modify_rate)
+
+        self.env = make_env(env_args)
+
         self.shutdown_flag = False
         self.flags = set()
 
