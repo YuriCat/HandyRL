@@ -175,7 +175,8 @@ def forward_prediction(model, hidden, batch, args):
         after_body = bimap_r(after_body_template, rotate(after_bodies), lambda _, ab: torch.stack(ab, dim=1))
         after_body = map_r(after_body, lambda ab: ab.flatten(0, 2))  # (..., B * T * P or 1, ...)
         outputs = model.model.head(after_body)
-        outputs = map_r(outputs, lambda o: o.unflatten(0, batch_shape))  # (..., B, T, P or 1, ...)
+        output_shape = batch_shape[0], batch_shape[1] - args['burn_in_steps'], batch_shape[2]
+        outputs = map_r(outputs, lambda o: o.unflatten(0, output_shape))  # (..., B, T, P or 1, ...)
 
     for k, o in outputs.items():
         if k == 'policy':
