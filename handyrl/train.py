@@ -166,9 +166,9 @@ def forward_prediction(model, hidden, batch, args):
                 if not model.training:
                     model.train()
                 outputs_ = model.model.body(enc, hidden_)
-            h, next_hidden = map_r(outputs_, lambda o: o.unflatten(0, (batch_shape[0], batch_shape[2])))  # (..., B, P or 1, ...)
+            after_body, next_hidden = map_r(outputs_, lambda o: o.unflatten(0, (batch_shape[0], batch_shape[2])))  # (..., B, P or 1, ...)
             if t >= args['burn_in_steps']:
-                after_bodies.append(h)
+                after_bodies.append(after_body)
             hidden = trimap_r(hidden, next_hidden, omask, lambda h, nh, m: h * (1 - m) + nh * m)
 
         after_body_template = after_bodies[0]
@@ -177,6 +177,10 @@ def forward_prediction(model, hidden, batch, args):
         outputs = model.model.head(after_body)
         output_shape = batch_shape[0], batch_shape[1] - args['burn_in_steps'], batch_shape[2]
         outputs = map_r(outputs, lambda o: o.unflatten(0, output_shape))  # (..., B, T, P or 1, ...)
+
+    # Be careful, the batch shape is changed here
+    if args['burn_in_steps'] > 0:
+        batch = map_r(batch, lambda v: v[:, args['burn_in_steps']:] if v.size(1) > 1 else v)
 
     for k, o in outputs.items():
         if k == 'policy':
@@ -188,7 +192,7 @@ def forward_prediction(model, hidden, batch, args):
             # mask valid target values and cumulative rewards
             outputs[k] = o.mul(batch['observation_mask'])
 
-    return outputs
+    return outputs, batch
 
 
 def compose_losses(outputs, log_selected_policies, total_advantages, targets, batch, args):
@@ -222,9 +226,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
 
 
 def compute_loss(batch, model, hidden, args):
-    outputs = forward_prediction(model, hidden, batch, args)
-    if args['burn_in_steps'] > 0:
-        batch = map_r(batch, lambda v: v[args['burn_in_steps']:])
+    outputs, batch = forward_prediction(model, hidden, batch, args)
 
     actions = batch['action']
     emasks = batch['episode_mask']
