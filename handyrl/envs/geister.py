@@ -127,43 +127,75 @@ class ScalarHead(nn.Module):
         return h
 
 
-class GeisterNet(nn.Module):
-    def __init__(self):
+class GeisterEncoder(nn.Module):
+    def __init__(self, filters):
         super().__init__()
-
-        layers, filters, p_filters = 3, 32, 8
         input_channels = 7 + 18  # board channels + scalar inputs
-        self.input_size = (input_channels, 6, 6)
-
         self.conv1 = nn.Conv2d(input_channels, filters, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(filters)
-        self.body = DRC(layers, filters, filters)
 
+    def forward(self, obs):
+        b, s = obs['board'], obs['scalar']
+        h_s = s.view(*s.size(), 1, 1).repeat(1, 1, 6, 6)
+        h = torch.cat([h_s, b], -3)
+        h_e = F.relu(self.bn1(self.conv1(h)))
+
+        turn_color = s[:, :1]
+        return h_e, turn_color
+
+
+class GeisterBody(nn.Module):
+    def __init__(self, layers, filters):
+        super().__init__()
+        self.drc = DRC(layers, filters, filters)
+
+    def init_hidden(self, batch_size):
+        return self.drc.init_hidden((6, 6), batch_size)
+
+    def forward(self, encoded, hidden):
+        h_e, turn_color = encoded
+        h, next_hidden = self.drc(h_e, hidden, num_repeats=3)
+        return (torch.cat([h_e, h], -3), turn_color), next_hidden
+
+
+class GeisterHead(nn.Module):
+    def __init__(self, filters, p_filters):
+        super().__init__()
         self.head_p_move = Conv2dHead((filters * 2, 6, 6), p_filters, 4)
         self.head_p_set = nn.Linear(1, 70, bias=True)
         self.head_v = ScalarHead((filters * 2, 6, 6), 1, 1)
         self.head_r = ScalarHead((filters * 2, 6, 6), 1, 1)
 
-    def init_hidden(self, batch_size=[]):
-        return self.body.init_hidden(self.input_size[1:], batch_size)
-
-    def forward(self, x, hidden):
-        b, s = x['board'], x['scalar']
-        h_s = s.view(*s.size(), 1, 1).repeat(1, 1, 6, 6)
-        h = torch.cat([h_s, b], -3)
-
-        h_e = F.relu(self.bn1(self.conv1(h)))
-        h, hidden = self.body(h_e, hidden, num_repeats=3)
-        h = torch.cat([h_e, h], -3)
-
+    def forward(self, after_body):
+        h, turn_color = after_body
         h_p_move = self.head_p_move(h)
-        turn_color = s[:, :1]
         h_p_set = self.head_p_set(turn_color)
         h_p = torch.cat([h_p_move, h_p_set], -1)
         h_v = self.head_v(h)
         h_r = self.head_r(h)
 
-        return {'policy': h_p, 'value': torch.tanh(h_v), 'return': h_r, 'hidden': hidden}
+        return {'policy': h_p, 'value': torch.tanh(h_v), 'return': h_r}
+
+
+class GeisterNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        layers, filters, p_filters = 3, 32, 8
+
+        self.encoder = GeisterEncoder(filters)
+        self.body = GeisterBody(layers, filters)
+        self.head = GeisterHead(filters, p_filters)
+
+    def init_hidden(self, batch_size=[]):
+        return self.body.init_hidden(batch_size)
+
+    def forward(self, obs, hidden):
+        h = self.encoder(obs)
+        h, next_hidden = self.body(h, hidden)
+        outputs = self.head(h)
+        outputs['hidden'] = next_hidden
+
+        return outputs
 
 
 class Environment(BaseEnvironment):
