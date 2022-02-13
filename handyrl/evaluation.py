@@ -351,8 +351,7 @@ def load_model(model_path, model):
         return model
     import torch
     from .model import ModelWrapper
-    model.load_state_dict(torch.load(model_path))
-    model.eval()
+    model.load(model_path)
     return ModelWrapper(model)
 
 

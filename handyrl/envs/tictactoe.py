@@ -69,6 +69,52 @@ class SimpleConv2dModel(nn.Module):
         return {'policy': h_p, 'value': torch.tanh(h_v)}
 
 
+class BoostingModel:
+    def __init__(self):
+        self.actor, self.critic = None, None
+
+    def prepare(self, dmats):
+        if self.actor is not None:
+            return
+        from xgboost import Booster
+        xgb_p, xgb_wp = dmats
+        self.actor = Booster({'objective': 'multi:softprob', 'num_class': 9}, [xgb_p])
+        self.critic = Booster({'objective': 'multi:softprob', 'num_class': 2}, [xgb_wp])
+
+    def __call__(self, obs, _=None):
+        return self.forward(obs, _)
+
+    def forward(self, obs, _=None):
+        device = obs.device
+        obs = obs.cpu().numpy()
+        if self.actor is None:
+            p = np.ones((obs.shape[0], 9), dtype=np.float32) / 9
+            wp = np.ones((obs.shape[0], 2), dtype=np.float32) / 2
+        else:
+            from xgboost import DMatrix
+            xgb_obs = DMatrix(obs)
+            p = self.actor.predict(xgb_obs)
+            wp = self.critic.predict(xgb_obs)
+        v = wp[:,:1] - wp[:,1:]
+        pt = torch.log(torch.from_numpy(p).to(device))
+        vt = torch.from_numpy(v).to(device)
+        return {'policy': pt, 'value': vt}
+
+    def load(self, path):
+        import pickle
+        with open(path + '-actor.xgb', 'rb') as f:
+            self.actor = pickle.load(f)
+        with open(path + '-critic.xgb', 'rb') as f:
+            self.critic = pickle.load(f)
+
+    def save(self, path):
+        import pickle
+        with open(path + '-actor.xgb', 'wb') as f:
+            pickle.dump(self.actor, f)
+        with open(path + '-critic.xgb', 'wb') as f:
+            pickle.dump(self.critic, f)
+
+
 class Environment(BaseEnvironment):
     X, Y = 'ABC',  '123'
     BLACK, WHITE = 1, -1
@@ -154,16 +200,16 @@ class Environment(BaseEnvironment):
         return [0, 1]
 
     def net(self):
-        return SimpleConv2dModel()
+        return BoostingModel()
 
     def observation(self, player=None):
         # input feature for neural nets
         turn_view = player is None or player == self.turn()
         color = self.color if turn_view else -self.color
-        a = np.stack([
-            np.ones_like(self.board) if turn_view else np.zeros_like(self.board),
-            self.board == color,
-            self.board == -color
+        a = np.concatenate([
+            [1] if turn_view else [0],
+            (self.board == color).flatten(),
+            (self.board == -color).flatten()
         ]).astype(np.float32)
         return a
 

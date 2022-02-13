@@ -185,7 +185,7 @@ def forward_prediction(model, hidden, batch, args):
     return outputs
 
 
-def compose_losses(outputs, log_selected_policies, total_advantages, targets, batch, args):
+def compose_losses(model, outputs, log_selected_policies, total_advantages, targets, batch, args):
     """Caluculate loss value
 
     Returns:
@@ -211,6 +211,28 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
     entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
     losses['total'] = base_loss + entropy_loss
+
+    # GBDT training
+    obs = map_r(batch['observation'], lambda o: o.flatten(0, 2))
+    action = batch['action'].flatten()
+    winner = targets['value'].argmax(2).flatten()
+    policy_weights = torch.clamp(turn_advantages - (1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])) * args['entropy_regularization'], 0, 1).flatten()
+    value_weights = (targets['value'][:,:,0] - targets['value'][:,:,1]).mul(0.5).abs().flatten()
+
+    #from lightgbm import Booster, Dataset
+    #obs = map_r(obs, lambda o: o.cpu().numpy())
+    #lgb_p = Dataset(obs, action.cpu().numpy(), weight=policy_weights.cpu().numpy())
+    #lgb_wp = Dataset(obs, dummy_winner.cpu().numpy(), weight=value_weights.cpu().numpy())
+
+    from xgboost import DMatrix, Booster
+    obs = map_r(obs, lambda o: o.cpu().numpy())
+    xgb_p = DMatrix(obs, action.cpu().numpy(), weight=policy_weights.cpu().numpy())
+    xgb_wp = DMatrix(obs, winner.cpu().numpy(), weight=value_weights.cpu().numpy())
+
+    model.model.prepare((xgb_p, xgb_wp))
+    for _ in range(1):
+        model.model.actor.update(xgb_p, 0)
+        model.model.critic.update(xgb_wp, 0)
 
     return losses, dcnt
 
@@ -259,7 +281,7 @@ def compute_loss(batch, model, hidden, args):
     # compute policy advantage
     total_advantages = clipped_rhos * sum(advantages.values())
 
-    return compose_losses(outputs, log_selected_t_policies, total_advantages, targets, batch, args)
+    return compose_losses(model, outputs, log_selected_t_policies, total_advantages, targets, batch, args)
 
 
 class Batcher:
@@ -322,9 +344,9 @@ class Trainer:
         self.model = model
         self.default_lr = 3e-8
         self.data_cnt_ema = self.args['batch_size'] * self.args['forward_steps']
-        self.params = list(self.model.parameters())
+        # qself.params = list(self.model.parameters())
         lr = self.default_lr * self.data_cnt_ema
-        self.optimizer = optim.Adam(self.params, lr=lr, weight_decay=1e-5) if len(self.params) > 0 else None
+        self.optimizer = True # optim.Adam(self.params, lr=lr, weight_decay=1e-5) if len(self.params) > 0 else None
         self.steps = 0
         self.batcher = Batcher(self.args, self.episodes)
         self.update_flag = False
@@ -368,10 +390,10 @@ class Trainer:
 
             losses, dcnt = compute_loss(batch, self.trained_model, hidden, self.args)
 
-            self.optimizer.zero_grad()
-            losses['total'].backward()
-            nn.utils.clip_grad_norm_(self.params, 4.0)
-            self.optimizer.step()
+            #self.optimizer.zero_grad()
+            #losses['total'].backward()
+            #nn.utils.clip_grad_norm_(self.params, 4.0)
+            #self.optimizer.step()
 
             batch_cnt += 1
             data_cnt += dcnt
@@ -382,11 +404,11 @@ class Trainer:
 
         print('loss = %s' % ' '.join([k + ':' + '%.3f' % (l / data_cnt) for k, l in loss_sum.items()]))
 
-        self.data_cnt_ema = self.data_cnt_ema * 0.8 + data_cnt / (1e-2 + batch_cnt) * 0.2
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = self.default_lr * self.data_cnt_ema / (1 + self.steps * 1e-5)
-        self.model.cpu()
-        self.model.eval()
+        #self.data_cnt_ema = self.data_cnt_ema * 0.8 + data_cnt / (1e-2 + batch_cnt) * 0.2
+        #for param_group in self.optimizer.param_groups:
+        #    param_group['lr'] = self.default_lr * self.data_cnt_ema / (1 + self.steps * 1e-5)
+        #self.model.cpu()
+        #self.model.eval()
         return copy.deepcopy(self.model)
 
     def run(self):
@@ -448,10 +470,10 @@ class Learner:
         self.thread.join()
 
     def model_path(self, model_id):
-        return os.path.join('models', str(model_id) + '.pth')
+        return os.path.join('models', str(model_id))
 
     def latest_model_path(self):
-        return os.path.join('models', 'latest.pth')
+        return os.path.join('models', 'latest')
 
     def update_model(self, model, steps):
         # get latest model and save it
@@ -459,8 +481,8 @@ class Learner:
         self.model_epoch += 1
         self.model = model
         os.makedirs('models', exist_ok=True)
-        torch.save(model.state_dict(), self.model_path(self.model_epoch))
-        torch.save(model.state_dict(), self.latest_model_path())
+        model.save(self.model_path(self.model_epoch))
+        model.save(self.latest_model_path())
 
     def feed_episodes(self, episodes):
         # analyze generated episodes
@@ -606,10 +628,13 @@ class Learner:
                         if model_id != self.model_epoch and model_id > 0:
                             try:
                                 model = copy.deepcopy(self.model)
-                                model.load_state_dict(torch.load(self.model_path(model_id)), strict=False)
+                                model.load(self.model_path(model_id))
                             except:
                                 # return latest model if failed to load specified model
                                 pass
+                        if model_id == 0:
+                            from handyrl.model import RandomModel
+                            model = RandomModel(self.model, self.env.observation())
                         send_data.append(pickle.dumps(model))
 
                 if not multi_req and len(send_data) == 1:

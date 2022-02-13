@@ -4,6 +4,7 @@
 import sys
 import yaml
 
+import xgboost as xgb  # early import https://github.com/dmlc/xgboost/issues/7039
 
 if __name__ == '__main__':
     with open('config.yaml') as f:
