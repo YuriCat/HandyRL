@@ -219,20 +219,14 @@ def compose_losses(model, outputs, log_selected_policies, total_advantages, targ
     policy_weights = torch.clamp(turn_advantages - (1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])) * args['entropy_regularization'], 0, 1).flatten()
     value_weights = (targets['value'][:,:,0] - targets['value'][:,:,1]).mul(0.5).abs().flatten()
 
-    #from lightgbm import Booster, Dataset
-    #obs = map_r(obs, lambda o: o.cpu().numpy())
-    #lgb_p = Dataset(obs, action.cpu().numpy(), weight=policy_weights.cpu().numpy())
-    #lgb_wp = Dataset(obs, dummy_winner.cpu().numpy(), weight=value_weights.cpu().numpy())
-
     from xgboost import DMatrix, Booster
     obs = map_r(obs, lambda o: o.cpu().numpy())
     xgb_p = DMatrix(obs, action.cpu().numpy(), weight=policy_weights.cpu().numpy())
     xgb_wp = DMatrix(obs, winner.cpu().numpy(), weight=value_weights.cpu().numpy())
 
     model.model.prepare((xgb_p, xgb_wp))
-    for _ in range(1):
-        model.model.actor.update(xgb_p, 0)
-        model.model.critic.update(xgb_wp, 0)
+    model.model.actor.update(xgb_p, 0)
+    model.model.critic.update(xgb_wp, 0)
 
     return losses, dcnt
 

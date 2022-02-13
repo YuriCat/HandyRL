@@ -78,8 +78,9 @@ class BoostingModel:
             return
         from xgboost import Booster
         xgb_p, xgb_wp = dmats
-        self.actor = Booster({'objective': 'multi:softprob', 'num_class': 9}, [xgb_p])
-        self.critic = Booster({'objective': 'multi:softprob', 'num_class': 2}, [xgb_wp])
+        basic_params = {'booster': 'dart', 'n_jobs': 1}
+        self.actor = Booster({'objective': 'multi:softprob', 'num_class': 9, **basic_params}, [xgb_p])
+        self.critic = Booster({'objective': 'multi:softprob', 'num_class': 2, **basic_params}, [xgb_wp])
 
     def __call__(self, obs, _=None):
         return self.forward(obs, _)
