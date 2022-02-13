@@ -342,9 +342,11 @@ class Trainer:
         lr = self.default_lr * self.data_cnt_ema
         self.optimizer = True # optim.Adam(self.params, lr=lr, weight_decay=1e-5) if len(self.params) > 0 else None
         self.steps = 0
+        self.epochs = 0
         self.batcher = Batcher(self.args, self.episodes)
         self.update_flag = False
         self.update_queue = queue.Queue(maxsize=1)
+        self.updatable_flag = False
         self.shutdown_flag = False
 
         self.wrapped_model = ModelWrapper(self.model)
@@ -373,6 +375,10 @@ class Trainer:
             self.trained_model.cuda()
         self.trained_model.train()
 
+        self.trained_model.model.reset()
+        self.epochs += 1
+        target_steps = int(10 * (self.epochs ** 0.5))
+
         while data_cnt == 0 or not (self.update_flag or self.shutdown_flag):
             batch = self.batcher.batch()
             batch_size = batch['value'].size(0)
@@ -395,6 +401,9 @@ class Trainer:
                 loss_sum[k] = loss_sum.get(k, 0.0) + l.item()
 
             self.steps += 1
+            if batch_cnt == target_steps:
+                self.updatable_flag = True
+        self.updatable_flag = False
 
         print('loss = %s' % ' '.join([k + ':' + '%.3f' % (l / data_cnt) for k, l in loss_sum.items()]))
 
@@ -564,8 +573,8 @@ class Learner:
         prev_update_episodes = self.args['minimum_episodes']
         while self.model_epoch < self.args['epochs'] or self.args['epochs'] < 0:
             # no update call before storing minimum number of episodes + 1 age
-            next_update_episodes = prev_update_episodes + self.args['update_episodes']
-            while not self.shutdown_flag and self.num_episodes < next_update_episodes:
+            #next_update_episodes = prev_update_episodes + self.args['update_episodes']
+            while not self.shutdown_flag:
                 conn, (req, data) = self.worker.recv()
                 multi_req = isinstance(data, list)
                 if not multi_req:
@@ -634,7 +643,9 @@ class Learner:
                 if not multi_req and len(send_data) == 1:
                     send_data = send_data[0]
                 self.worker.send(conn, send_data)
-            prev_update_episodes = next_update_episodes
+                if self.trainer.updatable_flag:
+                    break
+            #prev_update_episodes = next_update_episodes
             self.update()
         print('finished server')
 

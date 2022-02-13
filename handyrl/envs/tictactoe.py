@@ -73,6 +73,9 @@ class BoostingModel:
     def __init__(self):
         self.actor, self.critic = None, None
 
+    def reset(self):
+        self.actor, self.critic = None, None
+
     def prepare(self, dmats):
         if self.actor is not None:
             return
