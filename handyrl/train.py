@@ -215,14 +215,22 @@ def compose_losses(model, outputs, log_selected_policies, total_advantages, targ
     # GBDT training
     obs = map_r(batch['observation'], lambda o: o.flatten(0, 2))
     action = batch['action'].flatten()
-    winner = targets['value'].argmax(2).flatten()
-    policy_weights = torch.clamp(turn_advantages - (1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])) * args['entropy_regularization'], 0, 1).flatten()
-    value_weights = (targets['value'][:,:,0] - targets['value'][:,:,1]).mul(0.5).abs().flatten()
+    win = torch.clamp(targets['value'].sign(), 0, 1).mul(omasks).int()
+    policy_weights = torch.clamp(total_advantages - (1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])) * args['entropy_regularization'], 0, 1).mul(tmasks)
+    value_weights = (targets['value'] + 1).mul(0.5).mul(omasks).abs()  # for two-player zero sum game
+
+    if batch['action'].size(2) == 1:
+        win = win.sum(2)
+        policy_weights = policy_weights.sum(2)
+        value_weights = value_weights.sum(2)
+    win = win.flatten()
+    policy_weights = policy_weights.flatten()
+    value_weights = value_weights.flatten()
 
     from xgboost import DMatrix, Booster
     obs = map_r(obs, lambda o: o.cpu().numpy())
     xgb_p = DMatrix(obs, action.cpu().numpy(), weight=policy_weights.cpu().numpy())
-    xgb_wp = DMatrix(obs, winner.cpu().numpy(), weight=value_weights.cpu().numpy())
+    xgb_wp = DMatrix(obs, win.cpu().numpy(), weight=value_weights.cpu().numpy())
 
     model.model.prepare((xgb_p, xgb_wp))
     model.model.actor.update(xgb_p, 0)

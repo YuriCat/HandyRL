@@ -80,7 +80,7 @@ class BoostingModel:
         xgb_p, xgb_wp = dmats
         basic_params = {'booster': 'dart', 'rate_drop': 3e-2, 'n_jobs': 1}
         self.actor = Booster({'objective': 'multi:softprob', 'num_class': 9, **basic_params}, [xgb_p])
-        self.critic = Booster({'objective': 'multi:softprob', 'num_class': 2, **basic_params}, [xgb_wp])
+        self.critic = Booster({'objective': 'binary:logistic', **basic_params}, [xgb_wp])
 
     def __call__(self, obs, _=None):
         return self.forward(obs, _)
@@ -90,15 +90,15 @@ class BoostingModel:
         obs = obs.cpu().numpy()
         if self.actor is None:
             p = np.ones((obs.shape[0], 9), dtype=np.float32) / 9
-            wp = np.ones((obs.shape[0], 2), dtype=np.float32) / 2
+            wp = np.ones(obs.shape[0], dtype=np.float32) / 2
         else:
             from xgboost import DMatrix
             xgb_obs = DMatrix(obs)
             p = self.actor.predict(xgb_obs)
             wp = self.critic.predict(xgb_obs)
-        v = wp[:,:1] - wp[:,1:]
+        v = wp * 2 - 1
         pt = torch.log(torch.from_numpy(p).to(device))
-        vt = torch.from_numpy(v).to(device)
+        vt = torch.from_numpy(v).unsqueeze(-1).to(device)
         return {'policy': pt, 'value': vt}
 
     def load(self, path):
