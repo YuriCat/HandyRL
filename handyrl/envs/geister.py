@@ -532,10 +532,12 @@ class Environment(BaseEnvironment):
         if color == self.WHITE:
             b = np.rot90(b, k=2, axes=(1, 2))
 
-        return {'scalar': s, 'board': b}
+        #return {'scalar': s, 'board': b}
+        return np.concatenate([s, b.flatten()])
 
     def net(self):
-        return GeisterNet()
+        from ..model import BoostingModel
+        return BoostingModel(6 * 6 * 4 + 70)
 
 
 if __name__ == '__main__':

@@ -72,3 +72,53 @@ class RandomModel(nn.Module):
 
     def inference(self, *args):
         return self.output_dict
+
+
+# GBDT
+
+class BoostingModel:
+    def __init__(self, action_length):
+        self.action_length = action_length
+        self.actor, self.critic = None, None
+
+    def prepare(self, dmats):
+        if self.actor is not None:
+            return
+        from xgboost import Booster
+        xgb_p, xgb_wp = dmats
+        basic_params = {'booster': 'dart', 'rate_drop': 3e-2, 'n_jobs': 1}
+        self.actor = Booster({'objective': 'multi:softprob', 'num_class': self.action_length, **basic_params}, [xgb_p])
+        self.critic = Booster({'objective': 'binary:logistic', **basic_params}, [xgb_wp])
+
+    def __call__(self, obs, _=None):
+        return self.forward(obs, _)
+
+    def forward(self, obs, _=None):
+        device = obs.device
+        obs = obs.cpu().numpy()
+        if self.actor is None:
+            p = np.ones((obs.shape[0], self.action_length), dtype=np.float32) / self.action_length
+            wp = np.ones(obs.shape[0], dtype=np.float32) / 2
+        else:
+            from xgboost import DMatrix
+            xgb_obs = DMatrix(obs)
+            p = self.actor.predict(xgb_obs)
+            wp = self.critic.predict(xgb_obs)
+        v = wp * 2 - 1
+        pt = torch.log(torch.from_numpy(p).to(device))
+        vt = torch.from_numpy(v).unsqueeze(-1).to(device)
+        return {'policy': pt, 'value': vt}
+
+    def load(self, path):
+        import pickle
+        with open(path + '-actor.xgb', 'rb') as f:
+            self.actor = pickle.load(f)
+        with open(path + '-critic.xgb', 'rb') as f:
+            self.critic = pickle.load(f)
+
+    def save(self, path):
+        import pickle
+        with open(path + '-actor.xgb', 'wb') as f:
+            pickle.dump(self.actor, f)
+        with open(path + '-critic.xgb', 'wb') as f:
+            pickle.dump(self.critic, f)
