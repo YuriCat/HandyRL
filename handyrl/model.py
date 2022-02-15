@@ -90,6 +90,22 @@ class BoostingModel:
         self.actor = Booster({'objective': 'multi:softprob', 'num_class': self.action_length, **basic_params}, [xgb_p])
         self.critic = Booster({'objective': 'binary:logistic', **basic_params}, [xgb_wp])
 
+    def cuda(self):
+        if self.actor is not None:
+            self.actor.set_param('tree_method', 'gpu_hist')
+            self.critic.set_param('tree_method', 'gpu_hist')
+            self.actor.set_param({'predictor': 'gpu_predictor'})
+            self.critic.set_param({'predictor': 'gpu_predictor'})
+
+    def cpu(self):
+        if self.actor is not None:
+            self.actor.set_param('tree_method', 'hist')
+            self.critic.set_param('tree_method', 'hist')
+            self.actor.set_param('gpu_id', -1)
+            self.critic.set_param('gpu_id', -1)
+            self.actor.set_param({'predictor': 'cpu_predictor'})
+            self.critic.set_param({'predictor': 'cpu_predictor'})
+
     def __call__(self, obs, _=None):
         return self.forward(obs, _)
 

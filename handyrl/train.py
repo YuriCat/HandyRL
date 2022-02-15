@@ -232,6 +232,8 @@ def compose_losses(model, outputs, log_selected_policies, total_advantages, targ
     xgb_wp = DMatrix(obs, win.cpu().numpy(), weight=value_weights.cpu().numpy())
 
     model.model.prepare((xgb_p, xgb_wp))
+    if torch.cuda.is_available():
+        model.model.cuda()
     model.model.actor.update(xgb_p, 0)
     model.model.critic.update(xgb_wp, 0)
 
@@ -410,6 +412,7 @@ class Trainer:
         #    param_group['lr'] = self.default_lr * self.data_cnt_ema / (1 + self.steps * 1e-5)
         #self.model.cpu()
         #self.model.eval()
+        self.model.cpu()
         return copy.deepcopy(self.model)
 
     def run(self):
