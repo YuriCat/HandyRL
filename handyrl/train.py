@@ -197,9 +197,8 @@ def compose_losses(model, outputs, log_selected_policies, total_advantages, targ
 
     losses = {}
     dcnt = tmasks.sum().item()
-    turn_advantages = total_advantages.mul(tmasks).sum(2, keepdim=True)
 
-    losses['p'] = (-log_selected_policies * turn_advantages).sum()
+    losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).sum()
     if 'value' in outputs:
         losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
@@ -424,13 +423,12 @@ class Trainer:
 
     def run(self):
         print('waiting training')
+        while not self.shutdown_flag and len(self.episodes) < self.args['minimum_episodes']:
+            time.sleep(1)
+        if not self.shutdown_flag and self.optimizer is not None:
+            self.batcher.run()
+            print('started training')
         while not self.shutdown_flag:
-            if len(self.episodes) < self.args['minimum_episodes']:
-                time.sleep(1)
-                continue
-            if self.steps == 0 and self.optimizer is not None:
-                self.batcher.run()
-                print('started training')
             model = self.train()
             self.update_flag = False
             self.update_queue.put((model, self.steps))
@@ -462,6 +460,7 @@ class Learner:
         # generated datum
         self.generation_results = {}
         self.num_episodes = 0
+        self.num_returned_episodes = 0
 
         # evaluated datum
         self.results = {}
@@ -505,6 +504,9 @@ class Learner:
                 outcome = episode['outcome'][p]
                 n, r, r2 = self.generation_results.get(model_id, (0, 0, 0))
                 self.generation_results[model_id] = n + 1, r + outcome, r2 + outcome ** 2
+            self.num_returned_episodes += 1
+            if self.num_returned_episodes % 100 == 0:
+                print(self.num_returned_episodes, end=' ', flush=True)
 
         # store generated episodes
         self.trainer.episodes.extend([e for e in episodes if e is not None])
@@ -608,8 +610,6 @@ class Learner:
                                 else:
                                     args['model_id'][p] = -1
                             self.num_episodes += 1
-                            if self.num_episodes % 100 == 0:
-                                print(self.num_episodes, end=' ', flush=True)
 
                         elif args['role'] == 'e':
                             # evaluation configuration
