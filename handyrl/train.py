@@ -208,7 +208,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
-    entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
+    entropy_loss = 0 #entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
     losses['total'] = base_loss + entropy_loss
 
     return losses, dcnt
@@ -256,7 +256,10 @@ def compute_loss(batch, model, hidden, args):
         _, advantages['return'] = compute_target(args['policy_target'], *return_args)
 
     # compute policy advantage
-    total_advantages = clipped_rhos * sum(advantages.values())
+    kl_loss_coef = (1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])) * -args['entropy_regularization']
+    #baselines = F.log_softmax(torch.zeros_like(outputs['policy']) - batch['action_mask'], -1).gather(-1, actions) * emasks
+    ex_kl_loss = log_selected_b_policies - log_selected_t_policies.detach()
+    total_advantages = clipped_rhos * (sum(advantages.values()) + ex_kl_loss * kl_loss_coef)
 
     return compose_losses(outputs, log_selected_t_policies, total_advantages, targets, batch, args)
 
