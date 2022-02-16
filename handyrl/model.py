@@ -87,7 +87,7 @@ class BoostingModel:
         from xgboost import Booster
         xgb_p, xgb_wp = dmats
         basic_params = {'n_jobs': 1, 'learning_rate': 1e-6, 'booster': 'dart', 'rate_drop': 3e-2}
-        self.actor = Booster({'objective': 'multi:softprob', 'num_class': self.action_length, **basic_params}, [xgb_p])
+        self.actor = Booster({'objective': 'multi:softprob', 'num_class': self.action_length, 'base_score': 0, **basic_params}, [xgb_p])
         self.critic = Booster({'objective': 'binary:logistic', **basic_params}, [xgb_wp])
 
     def cuda(self):
