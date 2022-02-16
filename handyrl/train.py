@@ -226,7 +226,7 @@ def compose_losses(model, outputs, log_selected_policies, total_advantages, targ
     policy_weights = policy_weights.flatten()
     value_weights = value_weights.flatten()
 
-    from xgboost import DMatrix, Booster
+    from xgboost import DMatrix
     obs = map_r(obs, lambda o: o.cpu().numpy())
     xgb_p = DMatrix(obs, action.cpu().numpy(), weight=policy_weights.cpu().numpy())
     xgb_wp = DMatrix(obs, win.cpu().numpy(), weight=value_weights.cpu().numpy())
@@ -234,8 +234,8 @@ def compose_losses(model, outputs, log_selected_policies, total_advantages, targ
     model.model.prepare((xgb_p, xgb_wp))
     if torch.cuda.is_available():
         model.model.cuda()
-    model.model.actor.update(xgb_p, 0)
-    model.model.critic.update(xgb_wp, 0)
+    model.model.actor.update(xgb_p, model.model.actor.num_boosted_rounds())
+    model.model.critic.update(xgb_wp, model.model.critic.num_boosted_rounds())
 
     return losses, dcnt
 
