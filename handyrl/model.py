@@ -104,9 +104,6 @@ class BoostingModel:
             self.actor.set_param('predictor', 'cpu_predictor')
             self.critic.set_param('predictor', 'cpu_predictor')
 
-    def __call__(self, obs, _=None):
-        return self.forward(obs, _)
-
     def forward(self, obs, _=None):
         device = obs.device
         obs = obs.cpu().numpy()
