@@ -289,8 +289,6 @@ def compute_loss(batch, model, hidden, args):
     #ex_kl_loss = log_selected_b_policies - log_selected_t_policies.detach()
     total_advantages = clipped_rhos * (sum(advantages.values()) + ex_kl_loss * kl_loss_coef)
 
-    total_advantages = clipped_rhos * sum(advantages.values())
-
     return compose_losses(model, outputs, log_selected_t_policies, total_advantages, targets, batch, args)
 
 
