@@ -215,7 +215,7 @@ def compose_losses(model, outputs, log_selected_policies, total_advantages, targ
     obs = map_r(batch['observation'], lambda o: o.flatten(0, 2))
     action = batch['action'].flatten()
     win = torch.clamp(targets['value'].sign(), 0, 1).mul(omasks).int()
-    policy_weights = torch.clamp(total_advantages - (1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])) * args['entropy_regularization'], 0, 1).mul(tmasks)
+    policy_weights = torch.clamp(total_advantages, 0, 1).mul(tmasks)
     value_weights = (targets['value'] + 1).mul(0.5).mul(omasks).abs()  # for two-player zero sum game
 
     if batch['action'].size(2) == 1:
@@ -282,6 +282,13 @@ def compute_loss(batch, model, hidden, args):
         _, advantages['return'] = compute_target(args['policy_target'], *return_args)
 
     # compute policy advantage
+    total_advantages = clipped_rhos * sum(advantages.values())
+    kl_loss_coef = (1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])) * -args['entropy_regularization']
+    baselines = F.log_softmax(torch.zeros_like(outputs['policy']) - batch['action_mask'], -1).gather(-1, actions) * emasks
+    ex_kl_loss = baselines - log_selected_t_policies.detach()
+    #ex_kl_loss = log_selected_b_policies - log_selected_t_policies.detach()
+    total_advantages = clipped_rhos * (sum(advantages.values()) + ex_kl_loss * kl_loss_coef)
+
     total_advantages = clipped_rhos * sum(advantages.values())
 
     return compose_losses(model, outputs, log_selected_t_policies, total_advantages, targets, batch, args)
