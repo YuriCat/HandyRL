@@ -532,7 +532,7 @@ class Learner:
             if len(self.args.get('eval', {}).get('opponent', [])) <= 1:
                 output_wp('', self.results['outcome'][self.model_epoch])
             else:
-                output_wp('total', self.results['oucome'][self.model_epoch])
+                output_wp('total', self.results['outcome'][self.model_epoch])
                 for key in sorted(list(self.results_per_opponent['outcome'][self.model_epoch])):
                     output_wp(key, self.results_per_opponent['outcome'][self.model_epoch][key])
 
