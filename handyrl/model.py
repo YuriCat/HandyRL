@@ -89,8 +89,8 @@ class BoostingModel:
             return
         from xgboost import Booster
         xgb_p, xgb_wp = dmats
-        basic_params = {'booster': 'dart', 'rate_drop': 3e-2, 'n_jobs': 1}
-        self.actor = Booster({'objective': 'multi:softprob', 'num_class': self.action_length, **basic_params}, [xgb_p])
+        basic_params = {'n_jobs': 1, 'learning_rate': 1e-1, 'booster': 'dart', 'rate_drop': 3e-2}
+        self.actor = Booster({'objective': 'multi:softprob', 'num_class': self.action_length, 'base_score': 0, **basic_params}, [xgb_p])
         self.critic = Booster({'objective': 'binary:logistic', **basic_params}, [xgb_wp])
 
     def cuda(self):
@@ -106,9 +106,6 @@ class BoostingModel:
             self.critic.set_param('gpu_id', -1)
             self.actor.set_param('predictor', 'cpu_predictor')
             self.critic.set_param('predictor', 'cpu_predictor')
-
-    def __call__(self, obs, _=None):
-        return self.forward(obs, _)
 
     def forward(self, obs, _=None):
         device = obs.device
