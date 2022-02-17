@@ -234,6 +234,7 @@ def compose_losses(model, outputs, log_selected_policies, total_advantages, targ
     value_weights = value_weights.flatten()
 
     from xgboost import DMatrix
+    obs_ = map_r(obs_, lambda o: o.cpu().numpy())
     obs = map_r(obs, lambda o: o.cpu().numpy())
     xgb_p = DMatrix(obs_, all_actions.cpu().numpy(), weight=policy_weights.cpu().numpy())
     xgb_wp = DMatrix(obs, win.cpu().numpy(), weight=value_weights.cpu().numpy())
