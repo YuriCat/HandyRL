@@ -123,6 +123,10 @@ def make_batch(episodes, args):
     }
 
 
+def apply_mask(x, mask):
+    return map_r(x, lambda y: y * mask.view(*mask.size(), *([1] * (y.dim() - mask.dim()))) if y is not None else None)
+
+
 def forward_prediction(model, hidden, batch, args):
     """Forward calculation via neural network
 
@@ -148,9 +152,8 @@ def forward_prediction(model, hidden, batch, args):
         outputs = {}
         for t in range(batch_shape[1]):
             obs = map_r(observations, lambda o: o[:, t].flatten(0, 1))  # (..., B * P or 1, ...)
-            omask_ = batch['observation_mask'][:, t]
-            omask = map_r(hidden, lambda h: omask_.view(*h.size()[:2], *([1] * (h.dim() - 2))))
-            hidden_ = bimap_r(hidden, omask, lambda h, m: h * m)  # (..., B, P, ...)
+            omask = batch['observation_mask'][:, t]
+            hidden_ = apply_mask(hidden, omask)  # (..., B, P or 1, ...)
             if args['turn_based_training'] and not args['observation']:
                 hidden_ = map_r(hidden_, lambda h: h.sum(1))  # (..., B * 1, ...)
             else:
@@ -169,7 +172,9 @@ def forward_prediction(model, hidden, batch, args):
                     next_hidden = o
                 else:
                     outputs[k] = outputs.get(k, []) + [o]
-            hidden = trimap_r(hidden, next_hidden, omask, lambda h, nh, m: h * (1 - m) + nh * m)
+            hidden_ = apply_mask(hidden, 1 - omask)
+            next_hidden_ = apply_mask(next_hidden, omask)
+            hidden = bimap_r(hidden_, next_hidden_, lambda h, nh: h + nh)
         outputs = {k: torch.stack(o, dim=1) for k, o in outputs.items() if o[0] is not None}
 
     for k, o in outputs.items():
