@@ -81,7 +81,7 @@ class LongTermConvLSTM(nn.Module):
         return hidden
 
     @staticmethod
-    def _update_memory(block, x, hidden, i):
+    def _update_memory(block, x, hidden):
         (h, c), flag = hidden
         if flag[0] is not None:
             h, c = block(x, (h, c))
@@ -92,7 +92,7 @@ class LongTermConvLSTM(nn.Module):
     def forward(self, x, hidden):
         h = x
         for i, block in enumerate(self.memory_blocks):
-            h, hidden[i] = self._update_memory(block, h, hidden[i], i)
+            h, hidden[i] = self._update_memory(block, h, hidden[i])
         h = x
         for i, block in enumerate(self.decoder_blocks):
             h = F.relu(h + block(torch.cat([h, hidden[-1-i][0][0]], -3)))
