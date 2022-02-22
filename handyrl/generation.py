@@ -47,7 +47,7 @@ class Generator:
 
                 moment['observation'][player] = obs
                 moment['value'][player] = v
-                #moment['imperfect'][index] = imp
+                #moment['imperfect'][player] = imp
 
                 if player in turn_players:
                     p_ = outputs['policy']
