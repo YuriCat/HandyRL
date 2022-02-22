@@ -215,8 +215,8 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     if 'return' in outputs:
         losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
 
-    losses['i'] = F.kl_div(F.log_softmax(outputs['imperfect']), targets['imperfect'], reduction='none').mul(omasks).sum()
-    losses['iacc'] = (torch.argmax(outputs['imperfect'], dim=-1) == torch.argmax(batch['imperfect'], dim=-1)).unsqueeze(-1).mul(omasks).sum()
+    losses['i'] = F.kl_div(F.log_softmax(outputs['imperfect'], -1), targets['imperfect'], reduction='none').mul(omasks).sum()
+    losses['iacc'] = (torch.argmax(outputs['imperfect'], -1) == torch.argmax(batch['imperfect'], -1)).unsqueeze(-1).mul(omasks).sum()
 
     entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
