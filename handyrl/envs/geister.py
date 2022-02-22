@@ -163,7 +163,7 @@ class GeisterNet(nn.Module):
         h_p = torch.cat([h_p_move, h_p_set], -1)
         h_v = self.head_v(h)
         h_r = self.head_r(h)
-        h_imp = F.softmax(self.head_imp(h), -1)
+        h_imp = self.head_imp(h)
 
         return {'policy': h_p, 'value': torch.tanh(h_v), 'return': h_r, 'imperfect': h_imp, 'hidden': hidden}
 

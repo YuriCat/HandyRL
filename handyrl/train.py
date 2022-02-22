@@ -215,13 +215,13 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     if 'return' in outputs:
         losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
 
-    losses['i'] = F.kl_div(torch.log(outputs['imperfect']), targets['imperfect'], reduction='none').mul(omasks).sum()
+    losses['i'] = F.kl_div(F.log_softmax(outputs['imperfect']), targets['imperfect'], reduction='none').mul(omasks).sum()
     losses['iacc'] = (torch.argmax(outputs['imperfect'], dim=-1) == torch.argmax(batch['imperfect'], dim=-1)).unsqueeze(-1).mul(omasks).sum()
 
     entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
-    base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0) + losses['i']
+    base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0) + losses['i'] * 1e-2
     entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
     losses['total'] = base_loss + entropy_loss
 
@@ -272,7 +272,7 @@ def compute_loss(batch, model, hidden, args):
     lambda_imperfects = deque([batch['imperfect'][:, -1]])
     for i in range(emasks.size(1) - 2, -1, -1):
         inv_lmb = (1 - args['lambda']) * batch['observation_mask'][:, i + 1]
-        lambda_imperfects.appendleft(inv_lmb * outputs_nograd['imperfect'][:, i + 1] + (1 - inv_lmb) * lambda_imperfects[0])
+        lambda_imperfects.appendleft(inv_lmb * F.softmax(outputs_nograd['imperfect'][:, i + 1], -1) + (1 - inv_lmb) * lambda_imperfects[0])
     targets['imperfect'] = torch.stack(tuple(lambda_imperfects), dim=1)
 
     # compute policy advantage

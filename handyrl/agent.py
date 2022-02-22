@@ -39,7 +39,7 @@ def print_outputs(env, prob, v, imp):
         if prob is not None:
             print('p = %s' % (prob * 1000).astype(int))
         if imp is not None:
-            print('i = %s' % (imp * 1000).astype(int))
+            print('i = %s' % (softmax(imp) * 1000).astype(int))
 
 class Agent:
     def __init__(self, model, temperature=0.0):
