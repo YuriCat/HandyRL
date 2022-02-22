@@ -7,34 +7,12 @@ import random
 import time
 import multiprocessing as mp
 
-import numpy as np
-
 from .environment import prepare_env, make_env
 from .connection import send_recv, accept_socket_connections, connect_socket_connection
-from .model import softmax
+from .agent import RandomAgent, RuleBasedAgent, Agent, EnsembleAgent, SoftAgent
 
 
-io_match_port = 9876
-
-
-class RandomAgent:
-    def reset(self, env, show=False):
-        pass
-
-    def action(self, env, player, show=False):
-        actions = env.legal_actions()
-        return random.choice(actions)
-
-    def observe(self, env, player, show=False):
-        return 0.0
-
-
-class RuleBasedAgent(RandomAgent):
-    def action(self, env, player, show=False):
-        if hasattr(env, 'rule_based_action'):
-            return env.rule_based_action()
-        else:
-            return random.choice(env.legal_actions())
+network_match_port = 9876
 
 
 def view(env, player=None):
@@ -51,82 +29,7 @@ def view_transition(env):
         pass
 
 
-def print_outputs(env, prob, v, imp):
-    if hasattr(env, 'print_outputs'):
-        env.print_outputs(prob, v)
-    else:
-        print('v = %f' % v)
-        print('p = %s' % (prob * 1000).astype(int))
-        print('i = %s' % (imp * 1000).astype(int))
-
-
-class Agent:
-    def __init__(self, model, observation=False, temperature=0.0):
-        # model might be a neural net, or some planning algorithm such as game tree search
-        self.model = model
-        self.hidden = None
-        self.observation = observation
-        self.temperature = temperature
-
-    def reset(self, env, show=False):
-        self.hidden = self.model.init_hidden()
-
-    def plan(self, obs):
-        p, v, r, imp, self.hidden = self.model.inference(obs, self.hidden)
-        return p, v, r, imp
-
-    def action(self, env, player, show=False):
-        p, v, _, imp = self.plan(env.observation(player))
-        actions = env.legal_actions()
-        mask = np.ones_like(p)
-        mask[actions] = 0
-        p -= mask * 1e32
-
-        if show:
-            view(env, player=player)
-            print_outputs(env, softmax(p), v, imp)
-
-        if self.temperature == 0:
-            ap_list = sorted([(a, p[a]) for a in actions], key=lambda x: -x[1])
-            return ap_list[0][0]
-        else:
-            return random.choices(np.arange(len(p)), weights=softmax(p / self.temperature))[0]
-
-    def observe(self, env, player, show=False):
-        if self.observation:
-            _, v, _, self.hidden = self.planner.inference(env.observation(player), self.hidden)
-        if show:
-            view(env, player=player)
-            if self.observation:
-                print_outputs(env, None, v)
-
-
-class EnsembleAgent(Agent):
-    def reset(self, env, show=False):
-        self.hidden = [model.init_hidden() for model in self.model]
-
-    def plan(self, obs):
-        ps, vs, rs = [], [], []
-        for i, model in enumerate(self.model):
-            p, v, r, self.hidden[i] = model.inference(obs, self.hidden[i])
-            if p is not None:
-                ps.append(p)
-            if v is not None:
-                vs.append(v)
-            if r is not None:
-                rs.append(r)
-        p = np.mean(ps, axis=0) if len(ps) > 0 else None
-        v = np.mean(vs, axis=0) if len(vs) > 0 else None
-        r = np.mean(rs, axis=0) if len(rs) > 0 else None
-        return p, v, r
-
-
-class SoftAgent(Agent):
-    def __init__(self, model, observation=False):
-        super().__init__(model, observation=observation, temperature=1.0)
-
-
-class IOAgentClient:
+class NetworkAgentClient:
     def __init__(self, agent, env, conn):
         self.conn = conn
         self.agent = agent
@@ -140,30 +43,28 @@ class IOAgentClient:
             elif command == 'outcome':
                 print('outcome = %f' % args[0])
             elif hasattr(self.agent, command):
+                if command == 'action' or command == 'observe':
+                    view(self.env)
                 ret = getattr(self.agent, command)(self.env, *args, show=True)
                 if command == 'action':
                     player = args[0]
                     ret = self.env.action2str(ret, player)
             else:
                 ret = getattr(self.env, command)(*args)
-                if command == 'play_info':
+                if command == 'update':
+                    reset = args[1]
+                    if reset:
+                        self.agent.reset(self.env, show=True)
                     view_transition(self.env)
             self.conn.send(ret)
 
 
-class IOAgent:
+class NetworkAgent:
     def __init__(self, conn):
         self.conn = conn
 
-    def reset(self, data):
-        send_recv(self.conn, ('reset_info', [data]))
-        return send_recv(self.conn, ('reset', []))
-
-    def chance(self, data):
-        return send_recv(self.conn, ('chance_info', [data]))
-
-    def play(self, data):
-        return send_recv(self.conn, ('play_info', [data]))
+    def update(self, data, reset):
+        return send_recv(self.conn, ('update', [data, reset]))
 
     def outcome(self, outcome):
         return send_recv(self.conn, ('outcome', [outcome]))
@@ -175,25 +76,26 @@ class IOAgent:
         return send_recv(self.conn, ('observe', [player]))
 
 
-def exec_match(env, agents, critic, show=False, game_args={}):
+def exec_match(env, agents, critic=None, show=False, game_args={}):
     ''' match with shared game environment '''
     if env.reset(game_args):
         return None
     for agent in agents.values():
         agent.reset(env, show=show)
     while not env.terminal():
-        if env.chance():
-            return None
-        if env.terminal():
-            break
+        if show:
+            view(env)
         if show and critic is not None:
             print('cv = ', critic.observe(env, None, show=False)[0])
+        turn_players = env.turns()
+        observers = env.observers()
+        actions = {}
         for p, agent in agents.items():
-            if p == env.turn():
-                action = agent.action(env, p, show=show)
-            else:
+            if p in turn_players:
+                actions[p] = agent.action(env, p, show=show)
+            elif p in observers:
                 agent.observe(env, p, show=show)
-        if env.play(action):
+        if env.step(actions):
             return None
         if show:
             view_transition(env)
@@ -203,58 +105,71 @@ def exec_match(env, agents, critic, show=False, game_args={}):
     return outcome
 
 
-def exec_io_match(env, io_agents, critic, show=False, game_args={}):
+def exec_network_match(env, network_agents, critic=None, show=False, game_args={}):
     ''' match with divided game environment '''
     if env.reset(game_args):
         return None
-    for p, agent in io_agents.items():
+    for p, agent in network_agents.items():
         info = env.diff_info(p)
-        agent.reset(info)
+        agent.update(info, True)
     while not env.terminal():
-        if env.chance():
-            return None
-        for p, agent in io_agents.items():
-            info = env.diff_info(p)
-            agent.chance(info)
-        if env.terminal():
-            break
+        if show:
+            view(env)
         if show and critic is not None:
             print('cv = ', critic.observe(env, None, show=False)[0])
-        for p, agent in io_agents.items():
-            if p == env.turn():
-                action_ = agent.action(p)
-                action = env.str2action(action_, p)
-            else:
+        turn_players = env.turns()
+        observers = env.observers()
+        actions = {}
+        for p, agent in network_agents.items():
+            if p in turn_players:
+                action = agent.action(p)
+                actions[p] = env.str2action(action, p)
+            elif p in observers:
                 agent.observe(p)
-        if env.play(action):
+        if env.step(actions):
             return None
-        for p, agent in io_agents.items():
+        for p, agent in network_agents.items():
             info = env.diff_info(p)
-            agent.play(info)
+            agent.update(info, False)
     outcome = env.outcome()
-    for p, agent in io_agents.items():
+    for p, agent in network_agents.items():
         agent.outcome(outcome[p])
     return outcome
+
+
+def build_agent(raw, env):
+    if raw == 'random':
+        return RandomAgent()
+    elif raw == 'rulebase':
+        return RuleBasedAgent()
+    return None
 
 
 class Evaluator:
     def __init__(self, env, args):
         self.env = env
         self.args = args
-        self.default_agent = RuleBasedAgent()
+        self.default_opponent = 'random'
 
     def execute(self, models, args):
+        opponents = self.args.get('eval', {}).get('opponent', [])
+        if len(opponents) == 0:
+            opponent = self.default_opponent
+        else:
+            opponent = random.choice(opponents)
+
         agents = {}
         for p, model in models.items():
             if model is None:
-                agents[p] = self.default_agent
+                agents[p] = build_agent(opponent, self.env)
             else:
-                agents[p] = Agent(model, self.args['observation'])
-        outcome = exec_match(self.env, agents, None)
+                agents[p] = Agent(model)
+
+        outcome = exec_match(self.env, agents)
         if outcome is None:
             print('None episode in evaluation!')
             return None
-        return {'args': args, 'result': outcome}
+        return {'args': args, 'result': outcome, 'opponent': opponent}
 
 
 def wp_func(results):
@@ -275,8 +190,8 @@ def eval_process_mp_child(agents, critic, env_args, index, in_queue, out_queue, 
         g, agent_ids, pat_idx, game_args = args
         print('*** Game %d ***' % g)
         agent_map = {env.players()[p]: agents[ai] for p, ai in enumerate(agent_ids)}
-        if isinstance(list(agent_map.values())[0], IOAgent):
-            outcome = exec_io_match(env, agent_map, critic, show=show, game_args=game_args)
+        if isinstance(list(agent_map.values())[0], NetworkAgent):
+            outcome = exec_network_match(env, agent_map, critic, show=show, game_args=game_args)
         else:
             outcome = exec_match(env, agent_map, critic, show=show, game_args=game_args)
         out_queue.put((pat_idx, agent_ids, outcome))
@@ -303,9 +218,9 @@ def evaluate_mp(env, agents, critic, env_args, args_patterns, num_process, num_g
                 result_map[p][tmp_pat_idx] = {}
             args_cnt += 1
 
-    io_mode = agents[0] is None
-    if io_mode:  # network battle mode
-        agents = io_match_acception(num_process, env_args, len(agents), io_match_port)
+    network_mode = agents[0] is None
+    if network_mode:  # network battle mode
+        agents = network_match_acception(num_process, env_args, len(agents), network_match_port)
     else:
         agents = [agents] * num_process
 
@@ -314,7 +229,7 @@ def evaluate_mp(env, agents, critic, env_args, args_patterns, num_process, num_g
         args = agents[i], critic, env_args, i, in_queue, out_queue, seed
         if num_process > 1:
             mp.Process(target=eval_process_mp_child, args=args).start()
-            if io_mode:
+            if network_mode:
                 for agent in agents[i]:
                     agent.conn.close()
         else:
@@ -341,7 +256,7 @@ def evaluate_mp(env, agents, critic, env_args, args_patterns, num_process, num_g
         print('total', {k: total_results[p][k] for k in sorted(total_results[p].keys(), reverse=True)}, wp_func(total_results[p]))
 
 
-def io_match_acception(n, env_args, num_agents, port):
+def network_match_acception(n, env_args, num_agents, port):
     waiting_conns = []
     accepted_conns = []
 
@@ -354,29 +269,100 @@ def io_match_acception(n, env_args, num_agents, port):
             conn = waiting_conns[0]
             accepted_conns.append(conn)
             waiting_conns = waiting_conns[1:]
-            conn.send(env_args)  # send accpept with environment arguments
+            conn.send(env_args)  # send accept with environment arguments
 
     agents_list = [
-        [IOAgent(accepted_conns[i * num_agents + j]) for j in range(num_agents)]
+        [NetworkAgent(accepted_conns[i * num_agents + j]) for j in range(num_agents)]
         for i in range(n)
     ]
 
     return agents_list
 
 
-def get_model(env, model_path):
+class OnnxModel:
+    def __init__(self, model_path):
+        self.model_path = model_path
+        self.ort_session = None
+
+    def _open_session(self):
+        import os
+        os.environ['OMP_NUM_THREADS'] = '1'
+        os.environ['OMP_WAIT_POLICY'] = 'PASSIVE'
+
+        import onnxruntime
+        opts = onnxruntime.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+
+        self.ort_session = onnxruntime.InferenceSession(self.model_path, sess_options=opts)
+
+    def init_hidden(self):
+        if self.ort_session is None:
+            self._open_session()
+        hidden_inputs = [y for y in self.ort_session.get_inputs() if y.name.startswith('hidden')]
+        if len(hidden_inputs) == 0:
+            return None
+        import numpy as np
+        type_map = {
+            'tensor(float)': np.float32,
+            'tensor(int64)': np.int64,
+        }
+        hidden_tensors = [np.zeros(y.shape[1:], dtype=type_map[y.type]) for y in hidden_inputs]
+        return hidden_tensors
+
+    def inference(self, x, hidden=None, batch_input=False):
+        # numpy array -> numpy array
+        if self.ort_session is None:
+            self._open_session()
+
+        ort_inputs = {}
+        ort_input_names = [y.name for y in self.ort_session.get_inputs()]
+
+        import numpy as np
+        def insert_input(y):
+            y = y if batch_input else np.expand_dims(y, 0)
+            ort_inputs[ort_input_names[len(ort_inputs)]] = y
+        from .util import map_r
+        map_r(x, lambda y: insert_input(y))
+        if hidden is not None:
+            map_r(hidden, lambda y: insert_input(y))
+        ort_outputs = self.ort_session.run(None, ort_inputs)
+        if not batch_input:
+            ort_outputs = [o.squeeze(0) for o in ort_outputs]
+
+        ort_output_names = [y.name for y in self.ort_session.get_outputs()]
+        outputs = {name: ort_outputs[i] for i, name in enumerate(ort_output_names)}
+
+        hidden_outputs = []
+        for k in list(outputs.keys()):
+            if k.startswith('hidden'):
+                hidden_outputs.append(outputs.pop(k))
+        if len(hidden_outputs) == 0:
+            hidden_outputs = None
+
+        outputs = {**outputs, 'hidden': hidden_outputs}
+        return outputs
+
+
+def load_model(model_path, model):
+    if model_path.endswith('.onnx'):
+        model = OnnxModel(model_path)
+        return model
     import torch
-    from .model import SimpleConv2DModel as DefaultModel
-    model = env.net()(env) if hasattr(env, 'net') else DefaultModel(env)
-    model.load_state_dict(torch.load(model_path), strict=False)
+    from .model import ModelWrapper
+    model.load_state_dict(torch.load(model_path))
     model.eval()
-    return model
+    return ModelWrapper(model)
 
 
 def client_mp_child(env_args, model_path, conn):
     env = make_env(env_args)
-    model = get_model(env, model_path)
-    IOAgentClient(Agent(model), env, conn).run()
+    agent = build_agent(model_path, env)
+    if agent is None:
+        model = load_model(model_path, env.net())
+        agent = Agent(model)
+    NetworkAgentClient(agent, env, conn).run()
 
 
 def eval_main(args, argv):
@@ -388,7 +374,10 @@ def eval_main(args, argv):
     num_games = int(argv[1]) if len(argv) >= 2 else 100
     num_process = int(argv[2]) if len(argv) >= 3 else 1
 
-    agent1 = Agent(get_model(env, model_path))
+    agent1 = build_agent(model_path, env)
+    if agent1 is None:
+        model = load_model(model_path, env.net())
+        agent1 = Agent(model)
     critic = None
 
     print('%d process, %d games' % (num_process, num_games))
@@ -396,7 +385,7 @@ def eval_main(args, argv):
     seed = random.randrange(1e8)
     print('seed = %d' % seed)
 
-    agents = [agent1, RandomAgent()]
+    agents = [agent1] + [RandomAgent() for _ in range(len(env.players()) - 1)]
 
     evaluate_mp(env, agents, critic, env_args, {'default': {}}, num_process, num_games, seed)
 
@@ -423,7 +412,7 @@ def eval_client_main(args, argv):
     while True:
         try:
             host = argv[1] if len(argv) >= 2 else 'localhost'
-            conn = connect_socket_connection(host, io_match_port)
+            conn = connect_socket_connection(host, network_match_port)
             env_args = conn.recv()
         except EOFError:
             break
