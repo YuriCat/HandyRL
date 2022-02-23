@@ -57,44 +57,47 @@ class ConvLSTMCell(nn.Module):
         return h_next, c_next
 
 
-# Deep Repeated Conv-LSTM (https://arxiv.org/abs/1901.03559)
-# increases expressive power with fewer parameters
-# by repeatedly computing multi-layer convolutional LSTM.
-# When num_repeats=1, it is simply a multi-layer Conv-LSTM.
-
-class DRC(nn.Module):
-    def __init__(self, num_layers, input_dim, hidden_dim, kernel_size=3, bias=True):
+class LongTermConvLSTM(nn.Module):
+    def __init__(self, num_layers, dim, ksize=3, bias=True):
         super().__init__()
         self.num_layers = num_layers
 
         blocks = []
         for _ in range(self.num_layers):
-            blocks.append(ConvLSTMCell(
-                input_dim=input_dim,
-                hidden_dim=hidden_dim,
-                kernel_size=(kernel_size, kernel_size),
-                bias=bias
-            ))
-        self.blocks = nn.ModuleList(blocks)
+            blocks.append(ConvLSTMCell(dim, dim, (ksize, ksize), bias))
+        self.memory_blocks = nn.ModuleList(blocks)
+        blocks = []
+        for _ in range(self.num_layers):
+            blocks.append(nn.Conv2d(dim * 2, dim, ksize, padding=ksize//2, bias=bias))
+        self.decoder_blocks = nn.ModuleList(blocks)
 
     def init_hidden(self, input_size, batch_size):
-        hs, cs = [], []
-        for block in self.blocks:
+        hidden = []
+        for i, block in enumerate(self.memory_blocks):
             h, c = block.init_hidden(input_size, batch_size)
-            hs.append(h)
-            cs.append(c)
-        return hs, cs
+            length = 3 ** i
+            flag = [None] * (length - 1) + [torch.zeros(*batch_size, 1)]
+            hidden.append(((h, c), flag))
+        return hidden
 
-    def forward(self, x, hidden, num_repeats):
-        if hidden is None:
-            hidden = self.init_hidden(x.shape[-2:], x.shape[:-3])
+    @staticmethod
+    def _update_memory(block, x, hidden):
+        (h, c), flag = hidden
+        if flag[0] is not None:
+            h, c = block(x, (h, c))
+        flag = flag[1:] + flag[:1]
+        hidden = (h, c), flag
+        return h, hidden
 
-        hs, cs = hidden
-        for _ in range(num_repeats):
-            for i, block in enumerate(self.blocks):
-                hs[i], cs[i] = block(hs[i - 1] if i > 0 else x, (hs[i], cs[i]))
+    def forward(self, x, hidden):
+        h = x
+        for i, block in enumerate(self.memory_blocks):
+            h, hidden[i] = self._update_memory(block, h, hidden[i])
+        h = x
+        for i, block in enumerate(self.decoder_blocks):
+            h = F.relu(h + block(torch.cat([h, hidden[-1-i][0][0]], -3)))
 
-        return hs[-1], (hs, cs)
+        return h, hidden
 
 
 class Conv2dHead(nn.Module):
@@ -137,7 +140,7 @@ class GeisterNet(nn.Module):
 
         self.conv1 = nn.Conv2d(input_channels, filters, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(filters)
-        self.body = DRC(layers, filters, filters)
+        self.body = LongTermConvLSTM(layers, filters)
 
         self.head_p_move = Conv2dHead((filters * 2, 6, 6), p_filters, 4)
         self.head_p_set = nn.Linear(1, 70, bias=True)
@@ -154,7 +157,7 @@ class GeisterNet(nn.Module):
         h = torch.cat([h_s, b], -3)
 
         h_e = F.relu(self.bn1(self.conv1(h)))
-        h, hidden = self.body(h_e, hidden, num_repeats=3)
+        h, hidden = self.body(h_e, hidden)
         h = torch.cat([h_e, h], -3)
 
         h_p_move = self.head_p_move(h)

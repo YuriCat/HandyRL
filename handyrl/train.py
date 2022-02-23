@@ -180,7 +180,8 @@ def forward_prediction(model, hidden, batch, args):
                     next_hidden = o
                 else:
                     outputs[k] = outputs.get(k, []) + [o]
-            hidden = trimap_r(hidden, next_hidden, omask, lambda h, nh, m: h * (1 - m) + nh * m)
+            #hidden = trimap_r(hidden, next_hidden, omask, lambda h, nh, m: h * (1 - m) + nh * m)
+            hidden = next_hidden
         outputs = {k: torch.stack(o, dim=1) for k, o in outputs.items() if o[0] is not None}
 
     for k, o in outputs.items():

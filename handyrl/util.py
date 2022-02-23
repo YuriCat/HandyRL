@@ -4,21 +4,21 @@
 import numpy as np
 
 
-def map_r(x, callback_fn=None):
+def map_r(x, callback_fn=None, ignore_none=True):
     # recursive map function
     if isinstance(x, (list, tuple, set)):
         return type(x)(map_r(xx, callback_fn) for xx in x)
     elif isinstance(x, dict):
         return type(x)((key, map_r(xx, callback_fn)) for key, xx in x.items())
-    return callback_fn(x) if callback_fn is not None else None
+    return callback_fn(x) if callback_fn is not None and (not ignore_none or x is not None) else None
 
 
-def bimap_r(x, y, callback_fn=None):
+def bimap_r(x, y, callback_fn=None, ignore_none=True):
     if isinstance(x, (list, tuple)):
         return type(x)(bimap_r(xx, y[i], callback_fn) for i, xx in enumerate(x))
     elif isinstance(x, dict):
         return type(x)((key, bimap_r(xx, y[key], callback_fn)) for key, xx in x.items())
-    return callback_fn(x, y) if callback_fn is not None else None
+    return callback_fn(x, y) if callback_fn is not None and (not ignore_none or x is not None) else None
 
 
 def trimap_r(x, y, z, callback_fn=None):
