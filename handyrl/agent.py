@@ -78,7 +78,7 @@ class Agent:
         outputs = self.plan(env.observation(player))
         v = outputs.get('value', None)
         if show:
-            print_outputs(env, None, v)
+            print_outputs(env, None, v, outputs.get('imperfect'))
         return v if v is not None else [0.0]
 
 
