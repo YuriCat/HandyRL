@@ -131,10 +131,9 @@ def open_multiprocessing_connections(num_process, target, args_func):
 
 
 class MultiProcessJobExecutor:
-    def __init__(self, func, send_generator, num_workers, postprocess=None, num_receivers=1):
+    def __init__(self, func, send_generator, num_workers, postprocess=None):
         self.send_generator = send_generator
         self.postprocess = postprocess
-        self.num_receivers = num_receivers
         self.conns = []
         self.waiting_conns = queue.Queue()
         self.shutdown_flag = False
@@ -158,8 +157,7 @@ class MultiProcessJobExecutor:
 
     def start(self):
         self.threads.append(threading.Thread(target=self._sender))
-        for i in range(self.num_receivers):
-            self.threads.append(threading.Thread(target=self._receiver, args=(i,)))
+        self.threads.append(threading.Thread(target=self._receiver))
         for thread in self.threads:
             thread.start()
 
@@ -176,11 +174,10 @@ class MultiProcessJobExecutor:
                     pass
         print('finished sender')
 
-    def _receiver(self, index):
-        print('start receiver %d' % index)
-        conns = [conn for i, conn in enumerate(self.conns) if i % self.num_receivers == index]
+    def _receiver(self):
+        print('start receiver')
         while not self.shutdown_flag:
-            tmp_conns = connection.wait(conns)
+            tmp_conns = connection.wait(self.conns)
             for conn in tmp_conns:
                 data = conn.recv()
                 self.waiting_conns.put(conn)
@@ -192,7 +189,7 @@ class MultiProcessJobExecutor:
                         break
                     except queue.Full:
                         pass
-        print('finished receiver %d' % index)
+        print('finished receiver')
 
 
 class QueueCommunicator:

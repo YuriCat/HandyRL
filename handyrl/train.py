@@ -267,7 +267,7 @@ class Batcher:
         self.episodes = episodes
         self.shutdown_flag = False
 
-        self.executor = MultiProcessJobExecutor(self._worker, self._selector(), self.args['num_batchers'], num_receivers=2)
+        self.executor = MultiProcessJobExecutor(self._worker, self._selector(), self.args['num_batchers'])
 
     def _selector(self):
         while True:
