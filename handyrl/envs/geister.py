@@ -79,7 +79,7 @@ class DRC(nn.Module):
 
     def init_hidden(self, input_size, batch_size):
         hs, cs = [], []
-        for block in self.blocks:
+        for block in self.blocks[-1:]:
             h, c = block.init_hidden(input_size, batch_size)
             hs.append(h)
             cs.append(c)
@@ -91,7 +91,7 @@ class DRC(nn.Module):
 
         hs, cs = hidden
         for _ in range(num_repeats):
-            for i, block in enumerate(self.blocks):
+            for i, block in enumerate(self.blocks[-1:]):
                 #hs[i], cs[i] = block(hs[i - 1] if i > 0 else x, (hs[i], cs[i]))
                 hs[i], cs[i] = block(x, (hs[i], cs[i]))
 
