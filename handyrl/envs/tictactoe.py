@@ -57,7 +57,7 @@ class SimpleConv2dModel(nn.Module):
         self.conv = nn.Conv2d(3, filters, 3, stride=1, padding=1)
         self.blocks = nn.ModuleList([Conv(filters, filters, 3, bn=True) for _ in range(layers)])
         self.head_p = Head((filters, 3, 3), 2, 9)
-        self.head_v = Head((filters, 3, 3), 1, 1)
+        self.head_v = Head((filters, 3, 3), 1, 3)
 
     def forward(self, x, hidden=None):
         h = F.relu(self.conv(x))
@@ -66,7 +66,7 @@ class SimpleConv2dModel(nn.Module):
         h_p = self.head_p(h)
         h_v = self.head_v(h)
 
-        return {'policy': h_p, 'value': torch.tanh(h_v)}
+        return {'policy': h_p, 'value': F.softmax(h_v, -1), 'log_value': F.log_softmax(h_v, -1)}
 
 
 class Environment(BaseEnvironment):
@@ -139,11 +139,11 @@ class Environment(BaseEnvironment):
 
     def outcome(self):
         # terminal outcome
-        outcomes = [0, 0]
+        outcomes = [[0, 1, 0], [0, 1, 0]]
         if self.win_color > 0:
-            outcomes = [1, -1]
+            outcomes = [[1, 0, 0], [0, 0, 1]]
         if self.win_color < 0:
-            outcomes = [-1, 1]
+            outcomes = [[0, 0, 1], [1, 0, 0]]
         return {p: outcomes[idx] for idx, p in enumerate(self.players())}
 
     def legal_actions(self, _=None):

@@ -59,6 +59,7 @@ def make_batch(episodes, args):
 
         obs_zeros = map_r(moments[0]['observation'][moments[0]['turn'][0]], lambda o: np.zeros_like(o))  # template for padding
         amask_zeros = np.zeros_like(moments[0]['action_mask'][moments[0]['turn'][0]])  # template for padding
+        v_zeros = np.zeros_like(moments[0]['value'][moments[0]['turn'][0]])
 
         # data that is changed by training configuration
         if args['turn_based_training'] and not args['observation']:
@@ -77,7 +78,7 @@ def make_batch(episodes, args):
         obs = bimap_r(obs_zeros, obs, lambda _, o: np.array(o))
 
         # datum that is not changed by training configuration
-        v = np.array([[replace_none(m['value'][player], [0]) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
+        v = np.array([[replace_none(m['value'][player], v_zeros) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
         rew = np.array([[replace_none(m['reward'][player], [0]) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
         ret = np.array([[replace_none(m['return'][player], [0]) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
         oc = np.array([ep['outcome'][player] for player in players], dtype=np.float32).reshape(1, len(players), -1)
@@ -200,7 +201,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
 
     losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).sum()
     if 'value' in outputs:
-        losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
+        losses['v'] = F.kl_div(outputs['log_value'], targets['value'], reduction='none').mul(omasks).sum()
     if 'return' in outputs:
         losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
 
@@ -237,7 +238,7 @@ def compute_loss(batch, model, hidden, args):
     if 'value' in outputs_nograd:
         values_nograd = outputs_nograd['value']
         if args['turn_based_training'] and values_nograd.size(2) == 2:  # two player zerosum game
-            values_nograd_opponent = -torch.stack([values_nograd[:, :, 1], values_nograd[:, :, 0]], dim=2)
+            values_nograd_opponent = torch.stack([values_nograd[:, :, 1], values_nograd[:, :, 0]], dim=2).flip([3])
             values_nograd = (values_nograd + values_nograd_opponent) / (batch['observation_mask'].sum(dim=2, keepdim=True) + 1e-8)
         outputs_nograd['value'] = values_nograd * emasks + batch['outcome'] * (1 - emasks)
 
@@ -249,6 +250,7 @@ def compute_loss(batch, model, hidden, args):
     return_args = outputs_nograd.get('return', None), batch['return'], batch['reward'], args['lambda'], args['gamma'], clipped_rhos, cs
 
     targets['value'], advantages['value'] = compute_target(args['value_target'], *value_args)
+    advantages['value'] = advantages['value'][:,:,:,:1] - advantages['value'][:,:,:,-1:]
     targets['return'], advantages['return'] = compute_target(args['value_target'], *return_args)
 
     if args['policy_target'] != args['value_target']:
@@ -467,6 +469,7 @@ class Learner:
             for p in episode['args']['player']:
                 model_id = episode['args']['model_id'][p]
                 outcome = episode['outcome'][p]
+                outcome = outcome[0] - outcome[2]
                 n, r, r2 = self.generation_results.get(model_id, (0, 0, 0))
                 self.generation_results[model_id] = n + 1, r + outcome, r2 + outcome ** 2
             self.num_returned_episodes += 1
@@ -495,6 +498,7 @@ class Learner:
             for p in result['args']['player']:
                 model_id = result['args']['model_id'][p]
                 res = result['result'][p]
+                res = res[0] - res[2]
                 n, r, r2 = self.results.get(model_id, (0, 0, 0))
                 self.results[model_id] = n + 1, r + res, r2 + res ** 2
 
