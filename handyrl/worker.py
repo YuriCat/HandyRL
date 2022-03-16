@@ -166,8 +166,7 @@ def gather_loop(args, conn, gather_id):
     if conn is None:
         # entry
         address = args['worker'].get('relay_address', '127.0.0.1')
-        port = int(args['worker'].get('server_port', 9998))
-        conn = connect_socket_connection(address, port)
+        conn = connect_socket_connection(address, 9998)
 
         conn.send(('entry', args['worker']))
         args = conn.recv()
