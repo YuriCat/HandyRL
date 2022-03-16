@@ -25,6 +25,9 @@ if __name__ == '__main__':
     elif mode == '--worker' or mode == '-w':
         from handyrl.worker import worker_main as main
         main(args, sys.argv[2:])
+    elif mode == '--super-gather' or mode == '-sg':
+        from handyrl.worker import super_gather_main as main
+        main(args)
     elif mode == '--eval' or mode == '-e':
         from handyrl.evaluation import eval_main as main
         main(args, sys.argv[2:])

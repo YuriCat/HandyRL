@@ -16,6 +16,7 @@ import copy
 from .environment import prepare_env, make_env
 from .connection import QueueCommunicator
 from .connection import send_recv, open_multiprocessing_connections
+from .connection import connect_socket_connection, accept_socket_connections
 from .evaluation import Evaluator
 from .generation import Generator
 from .model import ModelWrapper, RandomModel
@@ -164,8 +165,9 @@ def gather_loop(args, conn, gather_id):
 
     if conn is None:
         # entry
+        address = args['worker'].get('relay_address', '127.0.0.1')
         port = int(args['worker'].get('server_port', 9998))
-        conn = connect_websocket_connection(args['worker']['server_address'], port)
+        conn = connect_socket_connection(address, port)
 
         conn.send(('entry', args['worker']))
         args = conn.recv()
@@ -181,6 +183,42 @@ def gather_loop(args, conn, gather_id):
         gather.run()
     finally:
         gather.shutdown()
+
+
+class SuperGather(QueueCommunicator):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.model_pool = {}
+
+        port = int(self.args.get('server_port', 8080))
+        self.server_conn = connect_websocket_connection(self.args['server_address'], port)
+
+    def _thread(self):
+        while True:
+            rdata = self.recv()
+            conn, data = rdata
+            if data[0] == 'model' and data[1] in self.model_pool:
+                print('found')
+                self.send(conn, self.model_pool[data[1]])
+                continue
+
+            self.server_conn.send(data)
+            recv_data = self.server_conn.recv()
+            if data[0] == 'model':
+                self.model_pool[data[1]] = recv_data
+            self.send(conn, recv_data)
+
+    def run(self):
+        import threading
+        threading.Thread(target=self._thread, daemon=True).start()
+
+        conn_acceptor = accept_socket_connections(port=9998, timeout=0.3)
+        while True:
+            conn = next(conn_acceptor)
+            if conn is not None:
+                self.add_connection(conn)
+
 
 
 class WorkerCluster(QueueCommunicator):
@@ -238,7 +276,7 @@ def connect_websocket_connection(host, port):
 
 class WorkerServer(WebsocketServer):
     def __init__(self, args):
-        port = int(args['worker'].get('server_port', 9998))
+        port = int(args['worker'].get('server_port', 8080))
         super().__init__(port=port, host='0.0.0.0')
         self.input_queue = queue.Queue(maxsize=256)
         self.output_queue = queue.Queue(maxsize=256)
@@ -317,10 +355,16 @@ class RemoteWorkerCluster:
                 p.terminate()
 
 
+def super_gather_main(args):
+    # offline generation worker
+    super_gather = SuperGather(args=args['worker_args'])
+    super_gather.run()
+
+
 def worker_main(args, argv):
     # offline generation worker
     worker_args = args['worker_args']
-    if len(argv) >= 1: 
+    if len(argv) >= 1:
         worker_args['num_parallel'] = int(argv[0])
 
     worker = RemoteWorkerCluster(args=worker_args)
