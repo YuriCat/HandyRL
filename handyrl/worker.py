@@ -194,23 +194,26 @@ class SuperGather(QueueCommunicator):
         self.server_conn = connect_websocket_connection(self.args['server_address'], port)
 
     def _thread(self):
+        port = int(self.args.get('server_port', 8080))
+        server_conn = connect_websocket_connection(self.args['server_address'], port)
+
         while True:
-            rdata = self.recv()
-            conn, data = rdata
+            conn, data = self.recv()
             if data[0] == 'model' and data[1] in self.model_pool:
                 print('found')
                 self.send(conn, self.model_pool[data[1]])
                 continue
 
-            self.server_conn.send(data)
-            recv_data = self.server_conn.recv()
+            server_conn.send(data)
+            recv_data = server_conn.recv()
             if data[0] == 'model':
                 self.model_pool[data[1]] = recv_data
             self.send(conn, recv_data)
 
     def run(self):
         import threading
-        threading.Thread(target=self._thread, daemon=True).start()
+        for _ in range(self.args.get('num_relay_threads', 1)):
+            threading.Thread(target=self._thread, daemon=True).start()
 
         conn_acceptor = accept_socket_connections(port=9998, timeout=0.3)
         while True:
@@ -354,9 +357,12 @@ class RemoteWorkerCluster:
                 p.terminate()
 
 
-def super_gather_main(args):
+def super_gather_main(args, argv):
+    worker_args = args['worker_args']
+    if len(argv) >= 1:
+         worker_args['num_relay_threads'] = int(argv[0])
     # offline generation worker
-    super_gather = SuperGather(args=args['worker_args'])
+    super_gather = SuperGather(args=worker_args)
     super_gather.run()
 
 
