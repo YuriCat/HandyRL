@@ -76,7 +76,12 @@ class Environment(BaseEnvironment):
 
     def __init__(self, args=None):
         super().__init__()
+        import subprocess
+        self.process = subprocess.Popen(["python3", "-m", "handyrl.envs.tictactoe"])
         self.reset()
+
+    def __del__(self):
+        self.process.kill()
 
     def reset(self, args=None):
         self.board = np.zeros((3, 3))  # (x, y)
@@ -169,6 +174,11 @@ class Environment(BaseEnvironment):
 
 
 if __name__ == '__main__':
+    while True:
+        print('process')
+        import time
+        time.sleep(1)
+
     e = Environment()
     for _ in range(100):
         e.reset()
