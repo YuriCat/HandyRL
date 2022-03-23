@@ -62,20 +62,17 @@ class ConvLSTMCell(nn.Module):
 # by repeatedly computing multi-layer convolutional LSTM.
 # When num_repeats=1, it is simply a multi-layer Conv-LSTM.
 
-class DRC(nn.Module):
-    def __init__(self, num_layers, input_dim, hidden_dim, kernel_size=3, bias=True):
+class SparseDRC(nn.Module):
+    def __init__(self, layers, filters, kernel_size=3, bias=True):
         super().__init__()
-        self.num_layers = num_layers
 
-        blocks = []
-        for _ in range(self.num_layers):
-            blocks.append(ConvLSTMCell(
-                input_dim=input_dim,
-                hidden_dim=hidden_dim,
+        self.blocks = nn.ModuleList([
+            ConvLSTMCell(
+                input_dim=filters,
+                hidden_dim=filters,
                 kernel_size=(kernel_size, kernel_size),
                 bias=bias
-            ))
-        self.blocks = nn.ModuleList(blocks)
+            ) for _ in range(layers)])
 
     def init_hidden(self, input_size, batch_size):
         hs, cs = [], []
@@ -85,14 +82,15 @@ class DRC(nn.Module):
             cs.append(c)
         return hs, cs
 
-    def forward(self, x, hidden, num_repeats):
+    def forward(self, x, hidden):
         if hidden is None:
             hidden = self.init_hidden(x.shape[-2:], x.shape[:-3])
 
         hs, cs = hidden
-        for _ in range(num_repeats):
+        for t in range(len(self.blocks) - 1, -1, -1):
             for i, block in enumerate(self.blocks):
-                hs[i], cs[i] = block(hs[i - 1] if i > 0 else x, (hs[i], cs[i]))
+                if t % (2 ** i) == 0:
+                    hs[i], cs[i] = block(hs[i - 1] if i > 0 else x, (hs[i], cs[i]))
 
         return hs[-1], (hs, cs)
 
@@ -103,11 +101,11 @@ class Conv2dHead(nn.Module):
         self.outputs = input_shape[1] * input_shape[2] * output_filters
 
         self.conv1 = nn.Conv2d(input_shape[0], filters, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn = nn.BatchNorm2d(filters)
+        self.ln = nn.LayerNorm((filters, *input_shape[1:]))
         self.conv2 = nn.Conv2d(filters, output_filters, kernel_size=1, bias=False)
 
     def forward(self, x):
-        h = F.relu(self.bn(self.conv1(x)))
+        h = F.relu(self.ln(self.conv1(x)))
         h = self.conv2(h).view(-1, self.outputs)
         return h
 
@@ -118,11 +116,11 @@ class ScalarHead(nn.Module):
         self.hidden_units = input_shape[1] * input_shape[2] * filters
 
         self.conv = nn.Conv2d(input_shape[0], filters, kernel_size=1, bias=False)
-        self.bn = nn.BatchNorm2d(filters)
+        self.ln = nn.LayerNorm((filters, *input_shape[1:]))
         self.fc = nn.Linear(input_shape[1] * input_shape[2] * filters, outputs, bias=False)
 
     def forward(self, x):
-        h = F.relu(self.bn(self.conv(x)))
+        h = F.relu(self.ln(self.conv(x)))
         h = self.fc(h.view(-1, self.hidden_units))
         return h
 
@@ -131,30 +129,29 @@ class GeisterNet(nn.Module):
     def __init__(self):
         super().__init__()
 
-        layers, filters, p_filters = 3, 32, 8
-        input_channels = 7 + 18  # board channels + scalar inputs
-        self.input_size = (input_channels, 6, 6)
+        layers, filters = 2, 32
+        p_filters, v_filters = 8, 2
+        self.input_size = (-1, 6, 6)
 
-        self.conv1 = nn.Conv2d(input_channels, filters, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(filters)
-        self.body = DRC(layers, filters, filters)
+        self.conv1 = nn.Conv2d(7, filters, kernel_size=3, stride=1, padding=1, bias=False)
+        self.fc1 = nn.Linear(18, filters, bias=False)
+        self.ln1 = nn.LayerNorm((filters, *self.input_size[1:]))
+        self.body = SparseDRC(layers, filters)
 
-        self.head_p_move = Conv2dHead((filters * 2, 6, 6), p_filters, 4)
+        self.head_p_move = Conv2dHead((filters, 6, 6), p_filters, 4)
         self.head_p_set = nn.Linear(1, 70, bias=True)
-        self.head_v = ScalarHead((filters * 2, 6, 6), 1, 1)
-        self.head_r = ScalarHead((filters * 2, 6, 6), 1, 1)
+        self.head_v = ScalarHead((filters, 6, 6), v_filters, 1)
+        self.head_r = ScalarHead((filters, 6, 6), v_filters, 1)
 
     def init_hidden(self, batch_size=[]):
         return self.body.init_hidden(self.input_size[1:], batch_size)
 
     def forward(self, x, hidden):
         b, s = x['board'], x['scalar']
-        h_s = s.view(*s.size(), 1, 1).repeat(1, 1, 6, 6)
-        h = torch.cat([h_s, b], -3)
 
-        h_e = F.relu(self.bn1(self.conv1(h)))
-        h, hidden = self.body(h_e, hidden, num_repeats=3)
-        h = torch.cat([h_e, h], -3)
+        h = self.conv1(b) + self.fc1(s).unflatten(1, (-1, 1, 1))
+        h = F.relu(self.ln1(h))
+        h, hidden = self.body(h, hidden)
 
         h_p_move = self.head_p_move(h)
         turn_color = s[:, :1]
