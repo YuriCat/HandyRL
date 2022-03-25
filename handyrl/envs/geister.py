@@ -13,46 +13,46 @@ import torch.nn.functional as F
 
 from ..environment import BaseEnvironment
 
+from ..util import map_r, bimap_r, trimap_r
 
-class ConvLSTMCell(nn.Module):
-    def __init__(self, input_dim, hidden_dim, kernel_size, bias):
+
+class GeneralizedLSTMCell(nn.Module):
+    def __init__(self, core, hidden_shape, concatted_dim):
         super().__init__()
+        self.core = core
+        self.hidden_shape = hidden_shape
+        self.concatted_dim = concatted_dim
 
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-
-        self.kernel_size = kernel_size
-        self.padding = kernel_size[0] // 2, kernel_size[1] // 2
-        self.bias = bias
-
-        self.conv = nn.Conv2d(
-            in_channels=self.input_dim + self.hidden_dim,
-            out_channels=4 * self.hidden_dim,
-            kernel_size=self.kernel_size,
-            padding=self.padding,
-            bias=self.bias
-        )
-
-    def init_hidden(self, input_size, batch_size):
+    def init_hidden(self, batch_size, inserted_shape=None):
+        def fill_shape(base, inserted):
+            if inserted is None:
+                return base
+            counter = 0
+            filled = []
+            for i, length in enumerate(base):
+                if length < 0:
+                    length = inserted[counter]
+                    counter += 1
+                filled.append(length)
+            return filled
         return tuple([
-            torch.zeros(*batch_size, self.hidden_dim, *input_size),
-            torch.zeros(*batch_size, self.hidden_dim, *input_size)
+            map_r(self.hidden_shape, lambda s: torch.zeros(*batch_size, *fill_shape(s, inserted_shape))),
+            map_r(self.hidden_shape, lambda s: torch.zeros(*batch_size, *fill_shape(s, inserted_shape)))
         ])
 
-    def forward(self, input_tensor, cur_state):
-        h_cur, c_cur = cur_state
+    def forward(self, input, state):
+        h_cur, c_cur = state
+        combined = trimap_r(input, h_cur, self.concatted_dim, lambda x, y, d: torch.cat([x, y], dim=d))
 
-        combined = torch.cat([input_tensor, h_cur], dim=-3)  # concatenate along channel axis
-        combined_conv = self.conv(combined)
+        h = self.core(combined)
+        splitted = bimap_r(h, self.concatted_dim, lambda x, d: torch.split(x, x.size(d)//4, dim=d))
+        cc_i, cc_f, cc_o, cc_g = [bimap_r(h, splitted, lambda _, x: x[i]) for i in range(4)]
 
-        cc_i, cc_f, cc_o, cc_g = torch.split(combined_conv, self.hidden_dim, dim=-3)
-        i = torch.sigmoid(cc_i)
-        f = torch.sigmoid(cc_f)
-        o = torch.sigmoid(cc_o)
-        g = torch.tanh(cc_g)
+        forgotten = bimap_r(c_cur, cc_f, lambda x, y: x * torch.sigmoid(y))
+        gated = bimap_r(cc_g, cc_i, lambda x, y: torch.tanh(x) * torch.sigmoid(y))
 
-        c_next = f * c_cur + i * g
-        h_next = o * torch.tanh(c_next)
+        c_next = bimap_r(forgotten, gated, lambda x, y: x + y)
+        h_next = bimap_r(c_next, cc_o, lambda x, y: torch.tanh(x) * torch.sigmoid(y))
 
         return h_next, c_next
 
@@ -65,22 +65,23 @@ class ConvLSTMCell(nn.Module):
 class DRC(nn.Module):
     def __init__(self, num_layers, input_dim, hidden_dim, kernel_size=3, bias=True):
         super().__init__()
-        self.num_layers = num_layers
+        self.blocks = nn.ModuleList([
+            GeneralizedLSTMCell(
+                nn.Conv2d(
+                    in_channels=input_dim + hidden_dim,
+                    out_channels=4 * hidden_dim,
+                    kernel_size=kernel_size,
+                    padding=(kernel_size//2, kernel_size//2),
+                    bias=bias
+                ),
+                np.array((hidden_dim, -1, -1), dtype=np.int64),  # must be np.ndarray
+                1
+            ) for _ in range(num_layers)])
 
-        blocks = []
-        for _ in range(self.num_layers):
-            blocks.append(ConvLSTMCell(
-                input_dim=input_dim,
-                hidden_dim=hidden_dim,
-                kernel_size=(kernel_size, kernel_size),
-                bias=bias
-            ))
-        self.blocks = nn.ModuleList(blocks)
-
-    def init_hidden(self, input_size, batch_size):
+    def init_hidden(self, batch_size, input_size):
         hs, cs = [], []
         for block in self.blocks:
-            h, c = block.init_hidden(input_size, batch_size)
+            h, c = block.init_hidden(batch_size, input_size)
             hs.append(h)
             cs.append(c)
         return hs, cs
@@ -145,7 +146,7 @@ class GeisterNet(nn.Module):
         self.head_r = ScalarHead((filters * 2, 6, 6), 1, 1)
 
     def init_hidden(self, batch_size=[]):
-        return self.body.init_hidden(self.input_size[1:], batch_size)
+        return self.body.init_hidden(batch_size, self.input_size[1:])
 
     def forward(self, x, hidden):
         b, s = x['board'], x['scalar']
