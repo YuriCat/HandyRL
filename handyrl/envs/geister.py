@@ -62,21 +62,12 @@ class GeneralizedLSTMCell(nn.Module):
 # by repeatedly computing multi-layer convolutional LSTM.
 # When num_repeats=1, it is simply a multi-layer Conv-LSTM.
 
-class DRC(nn.Module):
-    def __init__(self, num_layers, input_dim, hidden_dim, kernel_size=3, bias=True):
+class DeepRepeatedGeneralizedLSTM(nn.Module):
+    def __init__(self, num_layers, block_gen):
         super().__init__()
         self.blocks = nn.ModuleList([
-            GeneralizedLSTMCell(
-                nn.Conv2d(
-                    in_channels=input_dim + hidden_dim,
-                    out_channels=4 * hidden_dim,
-                    kernel_size=kernel_size,
-                    padding=(kernel_size//2, kernel_size//2),
-                    bias=bias
-                ),
-                np.array((hidden_dim, -1, -1), dtype=np.int64),  # must be np.ndarray
-                1
-            ) for _ in range(num_layers)])
+            GeneralizedLSTMCell(*block_gen())
+        for _ in range(num_layers)])
 
     def init_hidden(self, batch_size, input_size):
         hs, cs = [], []
@@ -87,9 +78,6 @@ class DRC(nn.Module):
         return hs, cs
 
     def forward(self, x, hidden, num_repeats):
-        if hidden is None:
-            hidden = self.init_hidden(x.shape[-2:], x.shape[:-3])
-
         hs, cs = hidden
         for _ in range(num_repeats):
             for i, block in enumerate(self.blocks):
@@ -138,7 +126,17 @@ class GeisterNet(nn.Module):
 
         self.conv1 = nn.Conv2d(input_channels, filters, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(filters)
-        self.body = DRC(layers, filters, filters)
+
+        def generate_block():
+            return nn.Conv2d(
+                    in_channels=filters * 2,
+                    out_channels=filters * 4,
+                    kernel_size=3,
+                    padding=1,
+                    bias=True
+                ), np.array((filters, -1, -1), dtype=np.int64), 1  # hidden shape must be np.ndarray
+
+        self.body = DeepRepeatedGeneralizedLSTM(layers, generate_block)
 
         self.head_p_move = Conv2dHead((filters * 2, 6, 6), p_filters, 4)
         self.head_p_set = nn.Linear(1, 70, bias=True)
