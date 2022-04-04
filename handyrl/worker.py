@@ -63,8 +63,8 @@ class Worker:
         return model_pool
 
     def run(self):
+        args = send_recv(self.conn, ('args', None))
         while True:
-            args = send_recv(self.conn, ('args', None))
             role = args['role']
 
             models = {}
@@ -78,10 +78,10 @@ class Worker:
 
             if role == 'g':
                 episode = self.generator.execute(models, args)
-                send_recv(self.conn, ('episode', episode))
+                args = send_recv(self.conn, ('episode', episode))
             elif role == 'e':
                 result = self.evaluator.execute(models, args)
-                send_recv(self.conn, ('result', result))
+                args = send_recv(self.conn, ('result', result))
 
 
 def make_worker_args(args, n_ga, gaid, base_wid, wid, conn):
@@ -124,16 +124,18 @@ class Gather(QueueCommunicator):
     def __del__(self):
         print('finished gather %d' % self.gather_id)
 
+    def _refresh_buffer(self):
+        if len(self.args_queue) == 0:
+            # get multiple arguments from server and store them
+            self.server_conn.send(('args', [None] * self.args_buf_len))
+            self.args_queue += self.server_conn.recv()
+
     def run(self):
         while True:
             conn, (command, args) = self.recv()
             if command == 'args':
                 # When requested arguments, return buffered outputs
-                if len(self.args_queue) == 0:
-                    # get multiple arguments from server and store them
-                    self.server_conn.send((command, [None] * self.args_buf_len))
-                    self.args_queue += self.server_conn.recv()
-
+                self._refresh_buffer()
                 next_args = self.args_queue.popleft()
                 self.send(conn, next_args)
 
@@ -147,7 +149,10 @@ class Gather(QueueCommunicator):
 
             else:
                 # return flag first and store data
-                self.send(conn, None)
+                self._refresh_buffer()
+                next_args = self.args_queue.popleft()
+                self.send(conn, next_args)
+
                 if command not in self.result_send_map:
                     self.result_send_map[command] = []
                 self.result_send_map[command].append(args)
@@ -157,7 +162,7 @@ class Gather(QueueCommunicator):
                     # send datum to server after buffering certain number of datum
                     for command, args_list in self.result_send_map.items():
                         self.server_conn.send((command, args_list))
-                        self.server_conn.recv()
+                        self.args_queue += self.server_conn.recv()
                     self.result_send_map = {}
                     self.result_send_cnt = 0
 

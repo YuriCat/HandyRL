@@ -559,7 +559,27 @@ class Learner:
                     data = [data]
                 send_data = []
 
-                if req == 'args':
+                if req == 'episode':
+                    # report generated episodes
+                    self.feed_episodes(data)
+
+                elif req == 'result':
+                    # report evaluation results
+                    self.feed_results(data)
+
+                if req == 'model':
+                    for model_id in data:
+                        model = self.model
+                        if model_id != self.model_epoch and model_id > 0:
+                            try:
+                                model = copy.deepcopy(self.model)
+                                model.load_state_dict(torch.load(self.model_path(model_id)), strict=False)
+                            except:
+                                # return latest model if failed to load specified model
+                                pass
+                        send_data.append(pickle.dumps(model))
+
+                else:
                     for _ in data:
                         args = {'model_id': {}}
 
@@ -590,28 +610,6 @@ class Learner:
                             self.num_results += 1
 
                         send_data.append(args)
-
-                elif req == 'episode':
-                    # report generated episodes
-                    self.feed_episodes(data)
-                    send_data = [None] * len(data)
-
-                elif req == 'result':
-                    # report evaluation results
-                    self.feed_results(data)
-                    send_data = [None] * len(data)
-
-                elif req == 'model':
-                    for model_id in data:
-                        model = self.model
-                        if model_id != self.model_epoch and model_id > 0:
-                            try:
-                                model = copy.deepcopy(self.model)
-                                model.load_state_dict(torch.load(self.model_path(model_id)), strict=False)
-                            except:
-                                # return latest model if failed to load specified model
-                                pass
-                        send_data.append(pickle.dumps(model))
 
                 if not multi_req and len(send_data) == 1:
                     send_data = send_data[0]
