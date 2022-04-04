@@ -10,6 +10,7 @@ import functools
 from socket import gethostname
 from collections import deque
 import multiprocessing as mp
+import multiprocessing.connection as connection
 import pickle
 import copy
 
@@ -93,10 +94,9 @@ def open_worker(args, conn, wid):
     worker.run()
 
 
-class Gather(QueueCommunicator):
+class Gather:
     def __init__(self, args, conn, gaid):
         print('started gather %d' % gaid)
-        super().__init__()
         self.gather_id = gaid
         self.server_conn = conn
         self.args_queue = deque([])
@@ -109,24 +109,26 @@ class Gather(QueueCommunicator):
         num_workers_per_gather = (n_pro // n_ga) + int(gaid < n_pro % n_ga)
         base_wid = args['worker'].get('base_worker_id', 0)
 
-        worker_conns = open_multiprocessing_connections(
+        self.worker_conns = open_multiprocessing_connections(
             num_workers_per_gather,
             open_worker,
             functools.partial(make_worker_args, args, n_ga, gaid, base_wid)
         )
 
-        for conn in worker_conns:
-            self.add_connection(conn)
-
-        self.args_buf_len = 1 + len(worker_conns) // 4
-        self.result_buf_len = 1 + len(worker_conns) // 4
+        self.args_buf_len = 1 + len(self.worker_conns) // 4
+        self.result_buf_len = 1 + len(self.worker_conns) // 4
 
     def __del__(self):
         print('finished gather %d' % self.gather_id)
 
     def run(self):
+        conns = deque([])
         while True:
-            conn, (command, args) = self.recv()
+            if len(conns) == 0:
+                conns += connection.wait(self.worker_conns)
+            conn = conns.popleft()
+            command, args = conn.recv()
+
             if command == 'args':
                 # When requested arguments, return buffered outputs
                 if len(self.args_queue) == 0:
@@ -135,7 +137,7 @@ class Gather(QueueCommunicator):
                     self.args_queue += self.server_conn.recv()
 
                 next_args = self.args_queue.popleft()
-                self.send(conn, next_args)
+                conn.send(next_args)
 
             elif command in self.data_map:
                 # answer data request as soon as possible
@@ -143,11 +145,11 @@ class Gather(QueueCommunicator):
                 if data_id not in self.data_map[command]:
                     self.server_conn.send((command, args))
                     self.data_map[command][data_id] = self.server_conn.recv()
-                self.send(conn, self.data_map[command][data_id])
+                conn.send(self.data_map[command][data_id])
 
             else:
                 # return flag first and store data
-                self.send(conn, None)
+                conn.send(None)
                 if command not in self.result_send_map:
                     self.result_send_map[command] = []
                 self.result_send_map[command].append(args)
@@ -163,11 +165,8 @@ class Gather(QueueCommunicator):
 
 
 def gather_loop(args, conn, gaid):
-    try:
-        gather = Gather(args, conn, gaid)
-        gather.run()
-    finally:
-        gather.shutdown()
+    gather = Gather(args, conn, gaid)
+    gather.run()
 
 
 class WorkerCluster(QueueCommunicator):
