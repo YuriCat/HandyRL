@@ -14,6 +14,10 @@ import torch.nn.functional as F
 from ..environment import BaseEnvironment
 
 
+The implementation of ConvLSTM is referenced the following code:
+https://github.com/ndrplz/ConvLSTM_pytorch
+We would like to express our greatest appreciation to the author.
+
 class ConvLSTMCell(nn.Module):
     def __init__(self, input_dim, hidden_dim, kernel_size, bias):
         super().__init__()
