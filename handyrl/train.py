@@ -210,7 +210,8 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
-    entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
+    entropy = torch.clamp(outputs['rho'] - 1, -1, 1) * -log_selected_policies
+    entropy_loss = entropy.mul(1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
     losses['total'] = base_loss + entropy_loss
 
     return losses, dcnt
@@ -232,6 +233,7 @@ def compute_loss(batch, model, hidden, args):
     # thresholds of importance sampling
     log_rhos = log_selected_t_policies.detach() - log_selected_b_policies
     rhos = torch.exp(log_rhos)
+    outputs['rho'] = rhos
     clipped_rhos = torch.clamp(rhos, 0, clip_rho_threshold)
     cs = torch.clamp(rhos, 0, clip_c_threshold)
     outputs_nograd = {k: o.detach() for k, o in outputs.items()}
