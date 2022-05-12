@@ -214,7 +214,8 @@ def convert_observation_115_plus_alpha(observation, prev_action, fixed_positions
 
         # previous action
         prev_action_feature = [0] * 19
-        prev_action_feature[prev_action[index]] = 1
+        if 0 <= prev_action[index] < 19:
+            prev_action_feature[prev_action[index]] = 1
         o.extend(prev_action_feature)
 
         # subjective pose
