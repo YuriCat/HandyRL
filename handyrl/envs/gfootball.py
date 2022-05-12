@@ -111,7 +111,7 @@ class FootballRecurrentNet(nn.Module):
         units = 192
 
         self.units = units
-        self.fc1 = nn.Linear(133, units)
+        self.fc1 = nn.Linear(152, units)
         self.fc2 = nn.Linear(units, units)
         self.rnn_blocks = nn.ModuleList([nn.LSTMCell(units, units) for _ in range(4)])
         self.fc3 = nn.Linear(units, units)
@@ -142,7 +142,7 @@ class FootballRecurrentNet(nn.Module):
 
 # https://github.com/google-research/football/blob/12f93de031e7f7c105f32924d113b1f7e6d77349/gfootball/env/wrappers.py
 
-def convert_observation_115_plus_alpha(observation, fixed_positions):
+def convert_observation_115_plus_alpha(observation, prev_action, fixed_positions):
     """Converts an observation into simple115 (or simple115v2) format.
     Args:
       observation: observation that the environment returns
@@ -166,7 +166,7 @@ def convert_observation_115_plus_alpha(observation, fixed_positions):
         return obj.flatten()
 
     final_obs = []
-    for obs in observation:
+    for index, obs in enumerate(observation):
         o = []
         if fixed_positions:
             for i, name in enumerate(['left_team', 'left_team_direction',
@@ -211,6 +211,11 @@ def convert_observation_115_plus_alpha(observation, fixed_positions):
 
         # sticky actions
         o.extend(obs['sticky_actions'])
+
+        # previous action
+        prev_action_feature = [0] * 19
+        prev_action_feature[prev_action[index]] = 1
+        o.extend(prev_action_feature)
 
         # subjective pose
         if obs['active'] != -1:
@@ -786,7 +791,7 @@ class Environment(BaseEnvironment):
         info = {'half_step': self.half_step}
         index = player * self.CONTROLLED_PLAYERS + number
         #return feature_from_states(self.states, info, )
-        return convert_observation_115_plus_alpha(self.states[-1]['observation'], True)[index]
+        return convert_observation_115_plus_alpha(self.states[-1]['observation'], self.states[-1]['action'], True)[index]
 
     def _preprocess_state(self, state):
         if state is None:
