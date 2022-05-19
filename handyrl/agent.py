@@ -33,12 +33,14 @@ class RuleBasedAgent(RandomAgent):
             return random.choice(env.legal_actions(player))
 
 
-def print_outputs(env, prob, v):
+def print_outputs(env, prob, v, r):
     if hasattr(env, 'print_outputs'):
         env.print_outputs(prob, v)
     else:
         if v is not None:
             print('v = %f' % v)
+        if r is not None:
+            print('r = %f' % r)
         if prob is not None:
             print('p = %s' % (prob * 1000).astype(int))
 
@@ -65,12 +67,13 @@ class Agent:
         actions = env.legal_actions(player)
         p = outputs['policy']
         v = outputs.get('value', None)
+        r = outputs.get('return', None)
         mask = np.ones_like(p)
         mask[actions] = 0
         p = p - mask * 1e32
 
         if show:
-            print_outputs(env, softmax(p), v)
+            print_outputs(env, softmax(p), v, r)
 
         if self.temperature == 0:
             ap_list = sorted([(a, p[a]) for a in actions], key=lambda x: -x[1])
@@ -84,8 +87,9 @@ class Agent:
             obs = env.observation(player)
             outputs = self.plan(obs)
             v = outputs.get('value', None)
+            r = outputs.get('return', None)
             if show:
-                print_outputs(env, None, v)
+                print_outputs(env, None, v, r)
         return v
 
 
