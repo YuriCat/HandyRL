@@ -46,6 +46,7 @@ def make_batch(episodes, args):
     """
 
     obss, datum = [], []
+    obs_zeros, amask_zeros = None, None
 
     def replace_none(a, b):
         return a if a is not None else b
@@ -58,8 +59,10 @@ def make_batch(episodes, args):
             players = [random.choice(players)]
 
         # template for padding
-        obs_zeros = map_r(moments[0]['observation'][moments[0]['turn'][0]], lambda o: np.zeros_like(o))
-        amask_zeros = np.zeros_like(moments[0]['action_mask'][moments[0]['turn'][0]])
+        if obs_zeros is None:
+            obs_zeros = map_r(moments[0]['observation'][moments[0]['turn'][0]], lambda o: np.zeros_like(o))
+        if amask_zeros is None:
+            amask_zeros = np.zeros_like(moments[0]['action_mask'][moments[0]['turn'][0]])
 
         # data that is changed by training configuration
         if args['turn_based_training'] and not args['observation']:
