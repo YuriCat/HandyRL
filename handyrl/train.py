@@ -59,19 +59,20 @@ def make_batch(episodes, args):
 
         # template for padding
         obs_zeros = map_r(moments[0]['observation'][moments[0]['turn'][0]], lambda o: np.zeros_like(o))
-        amask_zeros = np.zeros_like(moments[0]['action_mask'][moments[0]['turn'][0]])
+        amask_length = moments[0]['action_length'][moments[0]['turn'][0]]
+        amask_zeros = np.zeros_like(np.unpackbits(moments[0]['action_mask'][moments[0]['turn'][0]], count=amask_length).astype(np.float32))
 
         # data that is changed by training configuration
         if args['turn_based_training'] and not args['observation']:
             obs = [[m['observation'][m['turn'][0]]] for m in moments]
             prob = np.array([[[m['selected_prob'][m['turn'][0]]]] for m in moments])
             act = np.array([[m['action'][m['turn'][0]]] for m in moments], dtype=np.int64)[..., np.newaxis]
-            amask = np.array([[m['action_mask'][m['turn'][0]]] for m in moments])
+            amask = np.array([[np.unpackbits(m['action_mask'][m['turn'][0]], count=amask_length).astype(np.float32) * 1e32] for m in moments])
         else:
             obs = [[replace_none(m['observation'][player], obs_zeros) for player in players] for m in moments]
             prob = np.array([[[replace_none(m['selected_prob'][player], 1.0)] for player in players] for m in moments])
             act = np.array([[replace_none(m['action'][player], 0) for player in players] for m in moments], dtype=np.int64)[..., np.newaxis]
-            amask = np.array([[replace_none(m['action_mask'][player], amask_zeros + 1e32) for player in players] for m in moments])
+            amask = np.array([[replace_none(np.unpackbits(m['action_mask'][player], count=amask_length).astype(np.float32) if m['action_mask'][player] is not None else None, amask_zeros + 1) * 1e32 for player in players] for m in moments])
 
         # reshape observation
         obs = rotate(rotate(obs))  # (T, P, ..., ...) -> (P, ..., T, ...) -> (..., T, P, ...)
