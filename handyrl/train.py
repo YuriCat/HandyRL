@@ -25,7 +25,7 @@ import psutil
 from .environment import prepare_env, make_env
 from .util import map_r, bimap_r, trimap_r, rotate
 from .model import to_torch, to_gpu, ModelWrapper
-from .losses import compute_target
+from .losses import *
 from .connection import MultiProcessJobExecutor
 from .worker import WorkerCluster, WorkerServer
 
@@ -187,7 +187,7 @@ def forward_prediction(model, hidden, batch, args):
     return outputs
 
 
-def compose_losses(outputs, log_selected_policies, total_advantages, targets, batch, args):
+def compose_losses(outputs, log_policies, total_advantages, targets, batch, args):
     """Caluculate loss value
 
     Returns:
@@ -200,7 +200,8 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     losses = {}
     dcnt = tmasks.sum().item()
 
-    losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).sum()
+    c = 1e4
+    losses['p'] = (-log_policies * torch.clamp(total_advantages, -c, c)).mul(tmasks).sum()
     if 'value' in outputs:
         losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
@@ -216,21 +217,34 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     return losses, dcnt
 
 
-def compute_loss(batch, model, hidden, args):
+def compute_loss(batch, model, reg_model, prev_reg_model, hidden, args, alpha):
+    outputs_reg = forward_prediction(reg_model, hidden, batch, args)
+    if alpha < 1:
+        outputs_prev_reg = forward_prediction(prev_reg_model, hidden, batch, args)
+    else:
+        outputs_prev_reg = outputs_reg
     outputs = forward_prediction(model, hidden, batch, args)
     if args['burn_in_steps'] > 0:
         batch = map_r(batch, lambda v: v[:, args['burn_in_steps']:] if v.size(1) > 1 else v)
         outputs = map_r(outputs, lambda v: v[:, args['burn_in_steps']:])
+        outputs_reg = map_r(outputs_reg, lambda v: v[:, args['burn_in_steps']:])
+        outputs_prev_reg = map_r(outputs_prev_reg, lambda v: v[:, args['burn_in_steps']:])
 
     actions = batch['action']
     emasks = batch['episode_mask']
+    tmasks = batch['turn_mask']
     clip_rho_threshold, clip_c_threshold = 1.0, 1.0
+    eta = 1#0.2
 
-    log_selected_b_policies = torch.log(torch.clamp(batch['selected_prob'], 1e-16, 1)) * emasks
-    log_selected_t_policies = F.log_softmax(outputs['policy'], dim=-1).gather(-1, actions) * emasks
+    log_selected_b_policies = torch.log(torch.clamp(batch['selected_prob'], 1e-16, 1)) * tmasks
+    log_t_policies = F.log_softmax(outputs['policy'], dim=-1) * tmasks
+    log_selected_t_policies = log_t_policies.gather(-1, actions)
+    log_reg_policies = F.log_softmax(outputs_reg['policy'], dim=-1) * tmasks
+    log_prev_reg_policies = F.log_softmax(outputs_prev_reg['policy'], dim=-1) * tmasks
+    log_interp_reg_policies = log_reg_policies * alpha + log_prev_reg_policies * (1 - alpha)
 
     # thresholds of importance sampling
-    log_rhos = log_selected_t_policies.detach() - log_selected_b_policies
+    log_rhos = (log_selected_t_policies.detach() - log_selected_b_policies).sum(2, keepdim=True)
     rhos = torch.exp(log_rhos)
     clipped_rhos = torch.clamp(rhos, 0, clip_rho_threshold)
     cs = torch.clamp(rhos, 0, clip_c_threshold)
@@ -247,20 +261,20 @@ def compute_loss(batch, model, hidden, args):
     targets = {}
     advantages = {}
 
-    value_args = outputs_nograd.get('value', None), batch['outcome'], None, args['lambda'], 1, clipped_rhos, cs
-    return_args = outputs_nograd.get('return', None), batch['return'], batch['reward'], args['lambda'], args['gamma'], clipped_rhos, cs
+    value_args = outputs_nograd.get('value', None), batch['outcome'], None, actions, tmasks, log_selected_t_policies.detach(), log_selected_b_policies, log_t_policies.detach(), log_interp_reg_policies, args['lambda'], 1, clip_rho_threshold, clip_c_threshold, eta
+    return_args = outputs_nograd.get('return', None), batch['return'], batch['reward'], actions, tmasks, log_selected_t_policies.detach(), log_selected_b_policies, log_t_policies.detach(), log_interp_reg_policies, args['lambda'], args['gamma'], clip_rho_threshold, clip_c_threshold, eta
 
-    targets['value'], advantages['value'] = compute_target(args['value_target'], *value_args)
-    targets['return'], advantages['return'] = compute_target(args['value_target'], *return_args)
+    targets['value'], advantages['value'] = nash_vtrace2(*value_args)
+    targets['return'], advantages['return'] = nash_vtrace2(*return_args)
 
-    if args['policy_target'] != args['value_target']:
-        _, advantages['value'] = compute_target(args['policy_target'], *value_args)
-        _, advantages['return'] = compute_target(args['policy_target'], *return_args)
+    '''if args['policy_target'] != args['value_target']:
+        _, advantages['value'] = nash_vtrace(args['policy_target'], *value_args)
+        _, advantages['return'] = nash_vtrace(args['policy_target'], *return_args)'''
 
     # compute policy advantage
-    total_advantages = clipped_rhos * sum(advantages.values())
+    total_advantages = sum(advantages.values())
 
-    return compose_losses(outputs, log_selected_t_policies, total_advantages, targets, batch, args)
+    return compose_losses(outputs, log_t_policies, total_advantages, targets, batch, args)
 
 
 class Batcher:
@@ -311,12 +325,15 @@ class Batcher:
 
 
 class Trainer:
-    def __init__(self, args, model):
+    def __init__(self, args, model, learner):
+        self.learner = learner
         self.episodes = deque()
         self.args = args
         self.gpu = torch.cuda.device_count()
         self.model = model
-        self.default_lr = 3e-8
+        self.reg_model = model
+        self.prev_reg_model = model
+        self.default_lr = 3e-6
         self.data_cnt_ema = self.args['batch_size'] * self.args['forward_steps']
         self.params = list(self.model.parameters())
         lr = self.default_lr * self.data_cnt_ema
@@ -330,6 +347,8 @@ class Trainer:
         self.trained_model = self.wrapped_model
         if self.gpu > 1:
             self.trained_model = nn.DataParallel(self.wrapped_model)
+            self.reg_model = nn.DataParallel(self.reg_model)
+            self.prev_reg_model = nn.DataParallel(self.prev_reg_model)
 
     def update(self):
         self.update_flag = True
@@ -344,7 +363,10 @@ class Trainer:
         batch_cnt, data_cnt, loss_sum = 0, 0, {}
         if self.gpu > 0:
             self.trained_model.cuda()
+            self.reg_model.cuda()
         self.trained_model.train()
+        self.reg_model.eval()
+        self.prev_reg_model.eval()
 
         while data_cnt == 0 or not self.update_flag:
             batch = self.batcher.batch()
@@ -354,8 +376,9 @@ class Trainer:
             if self.gpu > 0:
                 batch = to_gpu(batch)
                 hidden = to_gpu(hidden)
+            alpha = min(1, 2 * ((self.learner.num_returned_episodes - self.args['minimum_episodes']) % self.args['update_episodes']) / self.args['update_episodes'])
 
-            losses, dcnt = compute_loss(batch, self.trained_model, hidden, self.args)
+            losses, dcnt = compute_loss(batch, self.trained_model, self.reg_model, self.prev_reg_model, hidden, self.args, alpha)
 
             self.optimizer.zero_grad()
             losses['total'].backward()
@@ -374,8 +397,12 @@ class Trainer:
         self.data_cnt_ema = self.data_cnt_ema * 0.8 + data_cnt / (1e-2 + batch_cnt) * 0.2
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = self.default_lr * self.data_cnt_ema / (1 + self.steps * 1e-5)
-        self.model.cpu()
+
+        self.prev_reg_model = self.reg_model
+        self.reg_model = copy.deepcopy(self.trained_model)
         self.model.eval()
+        self.model.cpu()
+        print(F.softmax(self.model.fc.bias, -1).detach().numpy())
         return copy.deepcopy(self.model)
 
     def run(self):
@@ -428,7 +455,7 @@ class Learner:
         self.worker = WorkerServer(args) if remote else WorkerCluster(args)
 
         # thread connection
-        self.trainer = Trainer(args, self.model)
+        self.trainer = Trainer(args, self.model, self)
 
     def model_path(self, model_id):
         return os.path.join('models', str(model_id) + '.pth')

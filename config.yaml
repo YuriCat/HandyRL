@@ -1,22 +1,23 @@
 
 env_args:
-    env: 'TicTacToe'
+    #env: 'TicTacToe'
     #env: 'Geister'
     #env: 'HungryGeese'
     #env: 'handyrl.envs.parallel_tictactoe'  # specify by path
+    env: 'handyrl.envs.rps'
 
 train_args:
     turn_based_training: True
-    observation: False
+    observation: True
     gamma: 0.8
-    forward_steps: 16
+    forward_steps: 2
     burn_in_steps: 0  # for RNNs
     compress_steps: 4
-    entropy_regularization: 1.0e-1
+    entropy_regularization: 0
     entropy_regularization_decay: 0.1
-    update_episodes: 200
+    update_episodes: 2000
     batch_size: 128
-    minimum_episodes: 400
+    minimum_episodes: 4000
     maximum_episodes: 100000
     epochs: -1
     num_batchers: 2
