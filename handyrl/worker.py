@@ -18,8 +18,9 @@ from .environment import prepare_env, make_env
 from .connection import QueueCommunicator
 from .connection import send_recv, open_multiprocessing_connections
 from .connection import connect_socket_connection, accept_socket_connections
-from .evaluation import Evaluator
 from .generation import Generator
+from .replay import Replayer
+from .evaluation import Evaluator
 from .model import ModelWrapper, RandomModel
 
 
@@ -33,9 +34,11 @@ class Worker:
 
         self.env = make_env({**args['env'], 'id': wid})
         self.generator = Generator(self.env, self.args)
+        self.replayer = Replayer(self.env, self.args) 
         self.evaluator = Evaluator(self.env, self.args)
 
         random.seed(args['seed'] + wid)
+
 
     def __del__(self):
         print('closed worker %d' % self.worker_id)
@@ -82,6 +85,9 @@ class Worker:
             if role == 'g':
                 episode = self.generator.execute(models, args)
                 send_recv(self.conn, ('episode', episode))
+            elif role == 'r':
+                replay = self.replayer.execute(args)
+                send_recv(self.conn, ('replay', replay))
             elif role == 'e':
                 result = self.evaluator.execute(models, args)
                 send_recv(self.conn, ('result', result))

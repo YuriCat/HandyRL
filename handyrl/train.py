@@ -89,6 +89,8 @@ def make_batch(episodes, args):
 
         progress = np.arange(ep['start'], ep['end'], dtype=np.float32)[..., np.newaxis] / ep['total']
 
+        svf = np.array([[[ep.get('replay', False)]]], dtype=np.float32)  # supervised flag
+
         # pad each array if step length is short
         batch_steps = args['burn_in_steps'] + args['forward_steps']
         if len(tmask) < batch_steps:
@@ -107,10 +109,10 @@ def make_batch(episodes, args):
             progress = np.pad(progress, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=1)
 
         obss.append(obs)
-        datum.append((prob, v, act, oc, rew, ret, emask, tmask, omask, amask, progress))
+        datum.append((prob, v, act, oc, rew, ret, emask, tmask, omask, amask, progress, svf))
 
     obs = to_torch(bimap_r(obs_zeros, rotate(obss), lambda _, o: np.array(o)))
-    prob, v, act, oc, rew, ret, emask, tmask, omask, amask, progress = [to_torch(np.array(val)) for val in zip(*datum)]
+    prob, v, act, oc, rew, ret, emask, tmask, omask, amask, progress, svf = [to_torch(np.array(val)) for val in zip(*datum)]
 
     return {
         'observation': obs,
@@ -122,6 +124,7 @@ def make_batch(episodes, args):
         'turn_mask': tmask, 'observation_mask': omask,
         'action_mask': amask,
         'progress': progress,
+        'supervised': svf,
     }
 
 
@@ -196,22 +199,30 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
 
     tmasks = batch['turn_mask']
     omasks = batch['observation_mask']
+    supervised = batch['supervised']
+    reinforce = 1 - supervised
 
     losses = {}
     dcnt = tmasks.sum().item()
 
-    losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).sum()
+    losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).mul(reinforce).sum()
     if 'value' in outputs:
-        losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
+        losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).mul(reinforce).sum() / 2
     if 'return' in outputs:
-        losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
+        losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).mul(reinforce).sum()
+
+    losses['sp'] = -log_selected_policies.mul(tmasks).mul(supervised).sum()
+    losses['spacc'] = (torch.argmax(outputs['policy'], -1).unsqueeze(-1) == batch['action']).float().mul(tmasks).mul(supervised).sum()
+    if 'value' in outputs:
+        losses['sv'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).mul(supervised).sum() / 2
 
     entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
+    supervised_loss = losses.get('sp', 0) + losses.get('sv', 0)
     entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
-    losses['total'] = base_loss + entropy_loss
+    losses['total'] = base_loss + entropy_loss + args['teacher_weight'] * supervised_loss
 
     return losses, dcnt
 
@@ -264,14 +275,18 @@ def compute_loss(batch, model, hidden, args):
 
 
 class Batcher:
-    def __init__(self, args, episodes):
+    def __init__(self, args, episodes, replays):
         self.args = args
         self.episodes = episodes
+        self.replays = replays
         self.executor = MultiProcessJobExecutor(self._worker, self._selector(), self.args['num_batchers'])
 
     def _selector(self):
+        replay_size = int(self.args['batch_size'] * self.args['replay_rate'])
+        episode_size = self.args['batch_size'] - replay_size
         while True:
-            yield [self.select_episode() for _ in range(self.args['batch_size'])]
+            yield [self.select_episode() for _ in range(episode_size)] + \
+                  [self.select_replay() for _ in range(replay_size)]
 
     def _worker(self, conn, bid):
         print('started batcher %d' % bid)
@@ -306,6 +321,24 @@ class Batcher:
         }
         return ep_minimum
 
+    def select_replay(self):
+        rep_idx = random.randrange(min(len(self.replays), self.args['maximum_replays']))
+        rep = self.replays[rep_idx]
+        turn_candidates = 1 + max(0, rep['steps'] - self.args['forward_steps'])  # change start turn by sequence length
+        train_st = random.randrange(turn_candidates)
+        st = max(0, train_st - self.args['burn_in_steps'])
+        ed = min(train_st + self.args['forward_steps'], rep['steps'])
+        st_block = st // self.args['compress_steps']
+        ed_block = (ed - 1) // self.args['compress_steps'] + 1
+        ep_minimum = {
+            'replay': True,
+            'args': rep['args'], 'outcome': rep['outcome'],
+            'moment': rep['moment'][st_block:ed_block],
+            'base': st_block * self.args['compress_steps'],
+            'start': st, 'end': ed, 'train_start': train_st, 'total': rep['steps'],
+        }
+        return ep_minimum
+
     def batch(self):
         return self.executor.recv()
 
@@ -313,6 +346,7 @@ class Batcher:
 class Trainer:
     def __init__(self, args, model):
         self.episodes = deque()
+        self.replays = deque()
         self.args = args
         self.gpu = torch.cuda.device_count()
         self.model = model
@@ -322,7 +356,7 @@ class Trainer:
         lr = self.default_lr * self.data_cnt_ema
         self.optimizer = optim.Adam(self.params, lr=lr, weight_decay=1e-5) if len(self.params) > 0 else None
         self.steps = 0
-        self.batcher = Batcher(self.args, self.episodes)
+        self.batcher = Batcher(self.args, self.episodes, self.replays)
         self.update_flag = False
         self.update_queue = queue.Queue(maxsize=1)
 
@@ -408,6 +442,8 @@ class Learner:
         self.shutdown_flag = False
         self.flags = set()
 
+        self.args['maximum_replays'] = args['maximum_episodes'] * args['replay_rate']
+
         # trained datum
         self.model_epoch = self.args['restart_epoch']
         self.model = net if net is not None else self.env.net()
@@ -417,7 +453,10 @@ class Learner:
         # generated datum
         self.generation_results = {}
         self.num_episodes = 0
+        self.num_replayed_episodes = 0
         self.num_returned_episodes = 0
+        self.num_returned_generated_episodes = 0
+        self.num_returned_replayed_episodes = 0
 
         # evaluated datum
         self.results = {}
@@ -456,6 +495,7 @@ class Learner:
                 n, r, r2 = self.generation_results.get(model_id, (0, 0, 0))
                 self.generation_results[model_id] = n + 1, r + outcome, r2 + outcome ** 2
             self.num_returned_episodes += 1
+            self.num_returned_generated_episodes += 1
             if self.num_returned_episodes % 100 == 0:
                 print(self.num_returned_episodes, end=' ', flush=True)
 
@@ -472,6 +512,19 @@ class Learner:
 
         while len(self.trainer.episodes) > maximum_episodes:
             self.trainer.episodes.popleft()
+
+    def feed_replays(self, replays):
+        for replay in replays:
+            if replay is None:
+                continue
+            self.num_returned_episodes += 1
+            self.num_returned_replayed_episodes += 1
+            if self.num_returned_episodes % 100 == 0:
+                print(self.num_returned_episodes, end=' ', flush=True)
+        # store loaded replays
+        self.trainer.replays.extend([r for r in replays if r is not None])
+        while len(self.trainer.replays) > self.args['maximum_replays']:
+            self.trainer.replays.popleft()
 
     def feed_results(self, results):
         # store evaluation results
@@ -557,6 +610,8 @@ class Learner:
                         # decide role
                         if self.num_results < self.eval_rate * self.num_episodes:
                             args['role'] = 'e'
+                        elif self.num_replayed_episodes < self.args['replay_rate'] * self.num_episodes:
+                            args['role'] = 'r'
                         else:
                             args['role'] = 'g'
 
@@ -569,6 +624,12 @@ class Learner:
                                 else:
                                     args['model_id'][p] = -1
                             self.num_episodes += 1
+
+                        elif args['role'] == 'r':
+                            # replay configuration
+                            args['player'] = [0, 1]
+                            self.num_episodes += 1
+                            self.num_replayed_episodes += 1
 
                         elif args['role'] == 'e':
                             # evaluation configuration
@@ -585,6 +646,11 @@ class Learner:
             elif req == 'episode':
                 # report generated episodes
                 self.feed_episodes(data)
+                send_data = [None] * len(data)
+
+            elif req == 'replay':
+                # report generated replays
+                self.feed_replays(data)
                 send_data = [None] * len(data)
 
             elif req == 'result':
@@ -608,7 +674,10 @@ class Learner:
                 send_data = send_data[0]
             self.worker.send(conn, send_data)
 
-            if self.num_returned_episodes >= next_update_episodes:
+            next_update_generated_episodes = np.ceil((1 - self.args['replay_rate']) * next_update_episodes)
+            next_update_replayed_episodes = np.ceil(self.args['replay_rate'] * next_update_episodes)
+            if self.num_returned_generated_episodes >= next_update_generated_episodes \
+                and self.num_returned_replayed_episodes >= next_update_replayed_episodes:
                 prev_update_episodes = next_update_episodes
                 next_update_episodes = prev_update_episodes + self.args['update_episodes']
                 self.update()
