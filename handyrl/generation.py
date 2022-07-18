@@ -58,7 +58,7 @@ class Generator:
                     p = softmax(p_ - action_mask)
                     action = [random.choices(np.arange(p.shape[-1]), weights=p[i])[0] for i in range(p.shape[0])]
 
-                    moment['selected_prob'][player] = np.take(p, np.array(action)[:,None])[:,0]
+                    moment['selected_prob'][player] = np.take_along_axis(p, np.array(action)[:, None], -1)[:, 0]
                     moment['action_mask'][player] = action_mask
                     moment['action'][player] = action
 
