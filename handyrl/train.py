@@ -57,8 +57,9 @@ def make_batch(episodes, args):
         if not args['turn_based_training']:  # solo training
             players = [random.choice(players)]
 
-        obs_zeros = map_r(moments[0]['observation'][moments[0]['turn'][0]], lambda o: np.zeros_like(o))  # template for padding
-        amask_zeros = np.zeros_like(moments[0]['action_mask'][moments[0]['turn'][0]])  # template for padding
+        # template for padding
+        obs_zeros = map_r(moments[0]['observation'][moments[0]['turn'][0]], lambda o: np.zeros_like(o))
+        amask_zeros = np.zeros_like(moments[0]['action_mask'][moments[0]['turn'][0]])
 
         # data that is changed by training configuration
         if args['turn_based_training'] and not args['observation']:
@@ -113,7 +114,8 @@ def make_batch(episodes, args):
 
     return {
         'observation': obs,
-        'selected_prob': prob, 'value': v,
+        'selected_prob': prob,
+        'value': v,
         'action': act, 'outcome': oc,
         'reward': rew, 'return': ret,
         'episode_mask': emask,
@@ -270,9 +272,7 @@ class Batcher:
     def __init__(self, args, episodes):
         self.args = args
         self.episodes = episodes
-        self.shutdown_flag = False
-
-        self.executor = MultiProcessJobExecutor(self._worker, self._selector(), self.args['num_batchers'], num_receivers=2)
+        self.executor = MultiProcessJobExecutor(self._worker, self._selector(), self.args['num_batchers'])
 
     def _selector(self):
         while True:
@@ -280,7 +280,7 @@ class Batcher:
 
     def _worker(self, conn, bid):
         print('started batcher %d' % bid)
-        while not self.shutdown_flag:
+        while True:
             episodes = conn.recv()
             batch = make_batch(episodes, self.args)
             conn.send(batch)
@@ -291,8 +291,9 @@ class Batcher:
 
     def select_episode(self):
         while True:
-            ep_idx = random.randrange(min(len(self.episodes), self.args['maximum_episodes']))
-            accept_rate = 1 - (len(self.episodes) - 1 - ep_idx) / self.args['maximum_episodes']
+            ep_count = min(len(self.episodes), self.args['maximum_episodes'])
+            ep_idx = random.randrange(ep_count)
+            accept_rate = 1 - (ep_count - 1 - ep_idx) / self.args['maximum_episodes']
             if random.random() < accept_rate:
                 break
         ep = self.episodes[ep_idx]
@@ -313,10 +314,6 @@ class Batcher:
     def batch(self):
         return self.executor.recv()
 
-    def shutdown(self):
-        self.shutdown_flag = True
-        self.executor.shutdown()
-
 
 class Trainer:
     def __init__(self, args, model):
@@ -333,7 +330,6 @@ class Trainer:
         self.batcher = Batcher(self.args, self.episodes)
         self.update_flag = False
         self.update_queue = queue.Queue(maxsize=1)
-        self.shutdown_flag = False
 
         self.wrapped_model = ModelWrapper(self.model)
         self.trained_model = self.wrapped_model
@@ -345,10 +341,6 @@ class Trainer:
         model, steps = self.update_queue.get()
         return model, steps
 
-    def shutdown(self):
-        self.shutdown_flag = True
-        self.batcher.shutdown()
-
     def train(self):
         if self.optimizer is None:  # non-parametric model
             time.sleep(0.1)
@@ -359,7 +351,7 @@ class Trainer:
             self.trained_model.cuda()
         self.trained_model.train()
 
-        while data_cnt == 0 or not (self.update_flag or self.shutdown_flag):
+        while data_cnt == 0 or not self.update_flag:
             batch = self.batcher.batch()
             batch_size = batch['value'].size(0)
             player_count = batch['value'].size(2)
@@ -393,12 +385,12 @@ class Trainer:
 
     def run(self):
         print('waiting training')
-        while not self.shutdown_flag and len(self.episodes) < self.args['minimum_episodes']:
+        while len(self.episodes) < self.args['minimum_episodes']:
             time.sleep(1)
-        if not self.shutdown_flag and self.optimizer is not None:
+        if self.optimizer is not None:
             self.batcher.run()
             print('started training')
-        while not self.shutdown_flag:
+        while True:
             model = self.train()
             self.update_flag = False
             self.update_queue.put((model, self.steps))
@@ -442,12 +434,6 @@ class Learner:
 
         # thread connection
         self.trainer = Trainer(args, self.model)
-
-    def shutdown(self):
-        self.shutdown_flag = True
-        self.trainer.shutdown()
-        self.worker.shutdown()
-        self.thread.join()
 
     def model_path(self, model_id):
         return os.path.join('models', str(model_id) + '.pth')
@@ -523,7 +509,8 @@ class Learner:
                 name_tag = ' (%s)' % name if name != '' else ''
                 print('win rate%s = %.3f (%.1f / %d)' % (name_tag, (mean + 1) / 2, (r + n) / 2, n))
 
-            if len(self.args.get('eval', {}).get('opponent', [])) <= 1:
+            keys = self.results_per_opponent[self.model_epoch]
+            if len(self.args.get('eval', {}).get('opponent', [])) <= 1 and len(keys) <= 1:
                 output_wp('', self.results[self.model_epoch])
             else:
                 output_wp('total', self.results[self.model_epoch])
@@ -551,17 +538,24 @@ class Learner:
         # returns as list if getting multiple requests as list
         print('started server')
         prev_update_episodes = self.args['minimum_episodes']
-        while self.model_epoch < self.args['epochs'] or self.args['epochs'] < 0:
-            # no update call before storing minimum number of episodes + 1 age
-            next_update_episodes = prev_update_episodes + self.args['update_episodes']
-            while not self.shutdown_flag and self.num_returned_episodes < next_update_episodes:
-                conn, (req, data) = self.worker.recv()
-                multi_req = isinstance(data, list)
-                if not multi_req:
-                    data = [data]
-                send_data = []
+        # no update call before storing minimum number of episodes + 1 epoch
+        next_update_episodes = prev_update_episodes + self.args['update_episodes']
 
-                if req == 'args':
+        while self.worker.connection_count() > 0 or not self.shutdown_flag:
+            try:
+                conn, (req, data) = self.worker.recv(timeout=0.3)
+            except queue.Empty:
+                continue
+
+            multi_req = isinstance(data, list)
+            if not multi_req:
+                data = [data]
+            send_data = []
+
+            if req == 'args':
+                if self.shutdown_flag:
+                    send_data = [None] * len(data)
+                else:
                     for _ in data:
                         args = {'model_id': {}}
 
@@ -593,46 +587,46 @@ class Learner:
 
                         send_data.append(args)
 
-                elif req == 'episode':
-                    # report generated episodes
-                    self.feed_episodes(data)
-                    send_data = [None] * len(data)
+            elif req == 'episode':
+                # report generated episodes
+                self.feed_episodes(data)
+                send_data = [None] * len(data)
 
-                elif req == 'result':
-                    # report evaluation results
-                    self.feed_results(data)
-                    send_data = [None] * len(data)
+            elif req == 'result':
+                # report evaluation results
+                self.feed_results(data)
+                send_data = [None] * len(data)
 
-                elif req == 'model':
-                    for model_id in data:
-                        model = self.model
-                        if model_id != self.model_epoch and model_id > 0:
-                            try:
-                                model = copy.deepcopy(self.model)
-                                model.load_state_dict(torch.load(self.model_path(model_id)), strict=False)
-                            except:
-                                # return latest model if failed to load specified model
-                                pass
-                        send_data.append(pickle.dumps(model))
+            elif req == 'model':
+                for model_id in data:
+                    model = self.model
+                    if model_id != self.model_epoch and model_id > 0:
+                        try:
+                            model = copy.deepcopy(self.model)
+                            model.load_state_dict(torch.load(self.model_path(model_id)), strict=False)
+                        except:
+                            # return latest model if failed to load specified model
+                            pass
+                    send_data.append(pickle.dumps(model))
 
-                if not multi_req and len(send_data) == 1:
-                    send_data = send_data[0]
-                self.worker.send(conn, send_data)
-            prev_update_episodes = next_update_episodes
-            self.update()
+            if not multi_req and len(send_data) == 1:
+                send_data = send_data[0]
+            self.worker.send(conn, send_data)
+
+            if self.num_returned_episodes >= next_update_episodes:
+                prev_update_episodes = next_update_episodes
+                next_update_episodes = prev_update_episodes + self.args['update_episodes']
+                self.update()
+                if self.args['epochs'] >= 0 and self.model_epoch >= self.args['epochs']:
+                    self.shutdown_flag = True
         print('finished server')
 
     def run(self):
-        try:
-            # open training thread
-            self.thread = threading.Thread(target=self.trainer.run)
-            self.thread.start()
-            # open generator, evaluator
-            self.worker.run()
-            self.server()
-
-        finally:
-            self.shutdown()
+        # open training thread
+        threading.Thread(target=self.trainer.run, daemon=True).start()
+        # open generator, evaluator
+        self.worker.run()
+        self.server()
 
 
 def train_main(args):
