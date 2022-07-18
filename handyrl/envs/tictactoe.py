@@ -63,7 +63,7 @@ class SimpleConv2dModel(nn.Module):
         h = F.relu(self.conv(x))
         for block in self.blocks:
             h = F.relu(block(h))
-        h_p = self.head_p(h)
+        h_p = self.head_p(h).unsqueeze(-2)
         h_v = self.head_v(h)
 
         return {'policy': h_p, 'value': torch.tanh(h_v)}
@@ -103,6 +103,7 @@ class Environment(BaseEnvironment):
     def play(self, action, _=None):
         # state transition function
         # action is integer (0 ~ 8)
+        action = action[0]
         x, y = action // 3, action % 3
         self.board[x, y] = self.color
 
@@ -146,7 +147,7 @@ class Environment(BaseEnvironment):
             outcomes = [-1, 1]
         return {p: outcomes[idx] for idx, p in enumerate(self.players())}
 
-    def legal_actions(self, _=None):
+    def legal_actions(self, _=None, __=None):
         # legal action list
         return [a for a in range(3 * 3) if self.board[a // 3, a % 3] == 0]
 

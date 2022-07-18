@@ -105,7 +105,7 @@ class BaseEnvironment:
     #
     # Should be defined in all games
     #
-    def legal_actions(self, player):
+    def legal_actions(self, player, unit):
         raise NotImplementedError()
 
     #
@@ -113,6 +113,9 @@ class BaseEnvironment:
     #
     def players(self):
         return [0]
+
+    def num_units(self):
+        return 1
 
     #
     # Should be defined in all games

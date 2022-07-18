@@ -95,15 +95,15 @@ def make_batch(episodes, args):
             pad_len_b = args['burn_in_steps'] - (ep['train_start'] - ep['start'])
             pad_len_a = batch_steps - len(tmask) - pad_len_b
             obs = map_r(obs, lambda o: np.pad(o, [(pad_len_b, pad_len_a)] + [(0, 0)] * (len(o.shape) - 1), 'constant', constant_values=0))
-            prob = np.pad(prob, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=1)
+            prob = np.pad(prob, [(pad_len_b, pad_len_a), (0, 0), (0, 0), (0, 0)], 'constant', constant_values=1)
             v = np.concatenate([np.pad(v, [(pad_len_b, 0), (0, 0), (0, 0)], 'constant', constant_values=0), np.tile(oc, [pad_len_a, 1, 1])])
-            act = np.pad(act, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
+            act = np.pad(act, [(pad_len_b, pad_len_a), (0, 0), (0, 0), (0, 0)], 'constant', constant_values=0)
             rew = np.pad(rew, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             ret = np.pad(ret, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             emask = np.pad(emask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             tmask = np.pad(tmask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             omask = np.pad(omask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
-            amask = np.pad(amask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=1e32)
+            amask = np.pad(amask, [(pad_len_b, pad_len_a), (0, 0), (0, 0), (0, 0)], 'constant', constant_values=1e32)
             progress = np.pad(progress, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=1)
 
         obss.append(obs)
@@ -176,7 +176,7 @@ def forward_prediction(model, hidden, batch, args):
 
     for k, o in outputs.items():
         if k == 'policy':
-            o = o.mul(batch['turn_mask'])
+            o = o.mul(batch['turn_mask'].unsqueeze(-1))
             if o.size(2) > 1 and batch_shape[2] == 1:  # turn-alternating batch
                 o = o.sum(2, keepdim=True)  # gather turn player's policies
             outputs[k] = o - batch['action_mask']
@@ -200,17 +200,17 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     losses = {}
     dcnt = tmasks.sum().item()
 
-    losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).sum()
+    losses['p'] = (-log_selected_policies * total_advantages.unsqueeze(-2)).mul(tmasks.unsqueeze(-1)).sum()
     if 'value' in outputs:
         losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
         losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
 
-    entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
+    entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks)
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
-    entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
+    entropy_loss = entropy.mul(1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
     losses['total'] = base_loss + entropy_loss
 
     return losses, dcnt
@@ -226,11 +226,11 @@ def compute_loss(batch, model, hidden, args):
     emasks = batch['episode_mask']
     clip_rho_threshold, clip_c_threshold = 1.0, 1.0
 
-    log_selected_b_policies = torch.log(torch.clamp(batch['selected_prob'], 1e-16, 1)) * emasks
-    log_selected_t_policies = F.log_softmax(outputs['policy'], dim=-1).gather(-1, actions) * emasks
+    log_selected_b_policies = torch.log(torch.clamp(batch['selected_prob'], 1e-16, 1)) * emasks.unsqueeze(-1)
+    log_selected_t_policies = F.log_softmax(outputs['policy'], dim=-1).gather(-1, actions) * emasks.unsqueeze(-1)
 
     # thresholds of importance sampling
-    log_rhos = log_selected_t_policies.detach() - log_selected_b_policies
+    log_rhos = (log_selected_t_policies.detach() - log_selected_b_policies).sum(-2)
     rhos = torch.exp(log_rhos)
     clipped_rhos = torch.clamp(rhos, 0, clip_rho_threshold)
     cs = torch.clamp(rhos, 0, clip_c_threshold)

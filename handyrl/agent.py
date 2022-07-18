@@ -15,8 +15,7 @@ class RandomAgent:
         pass
 
     def action(self, env, player, show=False):
-        actions = env.legal_actions(player)
-        return random.choice(actions)
+        return [random.choice(env.legal_actions(player, i)) for i in range(env.num_units())]
 
     def observe(self, env, player, show=False):
         return [0.0]
@@ -62,21 +61,21 @@ class Agent:
     def action(self, env, player, show=False):
         obs = env.observation(player)
         outputs = self.plan(obs)
-        actions = env.legal_actions(player)
-        p = outputs['policy']
+        p = outputs['policy'].reshape(env.num_units(), -1)
         v = outputs.get('value', None)
         mask = np.ones_like(p)
-        mask[actions] = 0
+        for i in range(env.num_units()):
+            actions = env.legal_actions(player, i)
+            mask[i, actions] = 0
         p = p - mask * 1e32
 
         if show:
             print_outputs(env, softmax(p), v)
 
         if self.temperature == 0:
-            ap_list = sorted([(a, p[a]) for a in actions], key=lambda x: -x[1])
-            return ap_list[0][0]
+            return [sorted([(a, p_[a]) for a, s in enumerate(p_)], key=lambda x: -x[1])[0][0] for p_ in p]
         else:
-            return random.choices(np.arange(len(p)), weights=softmax(p / self.temperature))[0]
+            return [random.choices(np.arange(len(probs)), weights=probs)[0] for probs in softmax(p / self.temperature)]
 
     def observe(self, env, player, show=False):
         v = None
