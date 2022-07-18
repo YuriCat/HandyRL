@@ -83,9 +83,9 @@ def make_batch(episodes, args):
         ret = np.array([[replace_none(m['return'][player], [0]) for player in players] for m in moments], dtype=np.float32)
         oc = np.array([ep['outcome'][player] for player in players], dtype=np.float32).reshape(1, *v.shape[1:])
 
-        emask = np.ones((len(moments), 1, 1), dtype=np.float32)  # episode mask
-        tmask = np.array([[[m['selected_prob'][player] is not None] for player in players] for m in moments], dtype=np.float32)
-        omask = np.array([[[m['observation'][player] is not None] for player in players] for m in moments], dtype=np.float32)
+        emask = np.ones((len(moments), 1), dtype=np.float32)  # episode mask
+        tmask = np.array([[m['selected_prob'][player] is not None for player in players] for m in moments], dtype=np.float32)
+        omask = np.array([[m['observation'][player] is not None for player in players] for m in moments], dtype=np.float32)
 
         progress = np.arange(ep['start'], ep['end'], dtype=np.float32)[..., np.newaxis] / ep['total']
 
@@ -100,9 +100,9 @@ def make_batch(episodes, args):
             act = np.pad(act, [(pad_len_b, pad_len_a)] + [(0, 0)] * (act.ndim - 1), 'constant', constant_values=0)
             rew = np.pad(rew, [(pad_len_b, pad_len_a)] + [(0, 0)] * (rew.ndim - 1), 'constant', constant_values=0)
             ret = np.pad(ret, [(pad_len_b, pad_len_a)] + [(0, 0)] * (ret.ndim - 1), 'constant', constant_values=0)
-            emask = np.pad(emask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
-            tmask = np.pad(tmask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
-            omask = np.pad(omask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
+            emask = np.pad(emask, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=0)
+            tmask = np.pad(tmask, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=0)
+            omask = np.pad(omask, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=0)
             amask = np.pad(amask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=1e32)
             progress = np.pad(progress, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=1)
 
@@ -211,7 +211,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     if 'return' in outputs:
         losses['r'] = apply_mask(F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none'), omasks).sum()
 
-    entropy = apply_mask(dist.Categorical(logits=outputs['policy']).entropy().unsqueeze(-1), tmasks)
+    entropy = apply_mask(dist.Categorical(logits=outputs['policy']).entropy(), tmasks)
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
@@ -263,7 +263,8 @@ def compute_loss(batch, model, hidden, args):
         _, advantages['return'] = compute_target(args['policy_target'], *return_args)
 
     # compute policy advantage
-    total_advantages = clipped_rhos * sum(advantages.values())
+    advantage_sum = sum([adv.view(*adv.size()[:3], -1).sum(-1, keepdim=True) for adv in advantages.values()])
+    total_advantages = clipped_rhos * advantage_sum
 
     return compose_losses(outputs, log_selected_t_policies, total_advantages, targets, batch, args)
 
