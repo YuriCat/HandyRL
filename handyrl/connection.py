@@ -10,6 +10,10 @@ import queue
 import multiprocessing as mp
 import multiprocessing.connection as connection
 
+import torch
+
+from .util import rotate, bimap_r
+
 
 def send_recv(conn, sdata):
     conn.send(sdata)
@@ -131,9 +135,10 @@ def open_multiprocessing_connections(num_process, target, args_func):
 
 
 class MultiProcessJobExecutor:
-    def __init__(self, func, send_generator, num_workers, postprocess=None):
+    def __init__(self, func, send_generator, num_workers, postprocess=None, divide_count=1):
         self.send_generator = send_generator
         self.postprocess = postprocess
+        self.divide_count = divide_count
         self.conns = []
         self.waiting_conns = queue.Queue()
         self.output_queue = queue.Queue(maxsize=8)
@@ -162,14 +167,21 @@ class MultiProcessJobExecutor:
 
     def _receiver(self):
         print('start receiver')
+        data_list = []
         while True:
             conns = connection.wait(self.conns)
             for conn in conns:
                 data = conn.recv()
                 self.waiting_conns.put(conn)
+                data_list.append(data)
+                if len(data_list) < self.divide_count:
+                    continue
+                datum = rotate(data_list)
+                datum = bimap_r(data_list[0], datum, lambda _, d: torch.cat(d, 0))
+                data_list = []
                 if self.postprocess is not None:
-                    data = self.postprocess(data)
-                self.output_queue.put(data)
+                    datum = self.postprocess(datum)
+                self.output_queue.put(datum)
         print('finished receiver')
 
 

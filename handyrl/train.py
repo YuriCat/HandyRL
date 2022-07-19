@@ -267,11 +267,13 @@ class Batcher:
     def __init__(self, args, episodes):
         self.args = args
         self.episodes = episodes
-        self.executor = MultiProcessJobExecutor(self._worker, self._selector(), self.args['num_batchers'])
+        self.divide_count = self.args.get('batch_divide_count', 1)
+        self.executor = MultiProcessJobExecutor(self._worker, self._selector(), self.args['num_batchers'], divide_count=self.divide_count)
 
     def _selector(self):
+        batch_size_per_process = self.args['batch_size'] // self.divide_count
         while True:
-            yield [self.select_episode() for _ in range(self.args['batch_size'])]
+            yield [self.select_episode() for _ in range(batch_size_per_process)]
 
     def _worker(self, conn, bid):
         print('started batcher %d' % bid)
