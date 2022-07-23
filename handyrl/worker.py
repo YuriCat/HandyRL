@@ -34,7 +34,7 @@ class Worker:
 
         self.env = make_env({**args['env'], 'id': wid})
         self.generator = Generator(self.env, self.args)
-        self.replayer = Replayer(self.env, self.args) 
+        self.replayer = Replayer(self.env, self.args)
         self.evaluator = Evaluator(self.env, self.args)
 
         random.seed(args['seed'] + wid)
