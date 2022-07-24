@@ -52,12 +52,19 @@ class ModelWrapper(nn.Module):
         if hasattr(self.model, 'inference'):
             return self.model.inference(x, hidden, **kwargs)
 
+        batch_input = kwargs.pop('batch_input', False)
         self.eval()
         with torch.no_grad():
-            xt = map_r(x, lambda x: torch.from_numpy(np.array(x)).contiguous().unsqueeze(0) if x is not None else None)
-            ht = map_r(hidden, lambda h: torch.from_numpy(np.array(h)).contiguous().unsqueeze(0) if h is not None else None)
+            xt, ht = to_torch((x, hidden))
+            if not batch_input:
+                xt = map_r(xt, lambda x: x.unsqueeze(0) if x is not None else None)
+                ht = map_r(ht, lambda h: h.unsqueeze(0) if h is not None else None)
             outputs = self.forward(xt, ht, **kwargs)
-        return map_r(outputs, lambda o: o.detach().numpy().squeeze(0) if o is not None else None)
+
+        if not batch_input:
+            outputs = map_r(outputs, lambda o: o.squeeze(0) if o is not None else None)
+        outputs = to_numpy(outputs)
+        return outputs
 
 
 # simple model
