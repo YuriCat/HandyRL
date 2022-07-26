@@ -429,10 +429,8 @@ class Learner:
         # generated datum
         self.generation_results = {}
         self.num_episodes = 0
-        self.num_replayed_episodes = 0
+        self.num_replays = 0
         self.num_returned_episodes = 0
-        self.num_returned_generated_episodes = 0
-        self.num_returned_replayed_episodes = 0
 
         # evaluated datum
         self.results = {}
@@ -471,7 +469,6 @@ class Learner:
                 n, r, r2 = self.generation_results.get(model_id, (0, 0, 0))
                 self.generation_results[model_id] = n + 1, r + outcome, r2 + outcome ** 2
             self.num_returned_episodes += 1
-            self.num_returned_generated_episodes += 1
             if self.num_returned_episodes % 100 == 0:
                 print(self.num_returned_episodes, end=' ', flush=True)
 
@@ -484,7 +481,6 @@ class Learner:
             if replay is None:
                 continue
             self.num_returned_episodes += 1
-            self.num_returned_replayed_episodes += 1
             if self.num_returned_episodes % 100 == 0:
                 print(self.num_returned_episodes, end=' ', flush=True)
 
@@ -588,7 +584,7 @@ class Learner:
                         # decide role
                         if self.num_results < self.eval_rate * self.num_episodes:
                             args['role'] = 'e'
-                        elif self.num_replayed_episodes < self.args['replay_rate'] * self.num_episodes:
+                        elif self.num_replays < self.args['replay_rate'] * self.num_episodes:
                             args['role'] = 'r'
                         else:
                             args['role'] = 'g'
@@ -607,7 +603,7 @@ class Learner:
                             # replay configuration
                             args['player'] = [0, 1]
                             self.num_episodes += 1
-                            self.num_replayed_episodes += 1
+                            self.num_replays += 1
 
                         elif args['role'] == 'e':
                             # evaluation configuration
@@ -652,10 +648,7 @@ class Learner:
                 send_data = send_data[0]
             self.worker.send(conn, send_data)
 
-            next_update_generated_episodes = np.ceil((1 - self.args['replay_rate']) * next_update_episodes)
-            next_update_replayed_episodes = np.ceil(self.args['replay_rate'] * next_update_episodes)
-            if self.num_returned_generated_episodes >= next_update_generated_episodes \
-                and self.num_returned_replayed_episodes >= next_update_replayed_episodes:
+            if self.num_returned_episodes >= next_update_episodes:
                 prev_update_episodes = next_update_episodes
                 next_update_episodes = prev_update_episodes + self.args['update_episodes']
                 self.update()
