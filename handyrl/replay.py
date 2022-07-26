@@ -59,6 +59,7 @@ class Replayer:
             return None
 
         replay = {
+            'replay': True,
             'args': args, 'steps': len(moments),
             'outcome': self.env.outcome(),
             'moment': [

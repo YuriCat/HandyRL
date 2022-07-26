@@ -275,18 +275,14 @@ def compute_loss(batch, model, hidden, args):
 
 
 class Batcher:
-    def __init__(self, args, episodes, replays):
+    def __init__(self, args, episodes):
         self.args = args
         self.episodes = episodes
-        self.replays = replays
         self.executor = MultiProcessJobExecutor(self._worker, self._selector(), self.args['num_batchers'])
 
     def _selector(self):
-        replay_size = int(self.args['batch_size'] * self.args['replay_rate'])
-        episode_size = self.args['batch_size'] - replay_size
         while True:
-            yield [self.select_episode() for _ in range(episode_size)] + \
-                  [self.select_replay() for _ in range(replay_size)]
+            yield [self.select_episode() for _ in range(self.args['batch_size'])]
 
     def _worker(self, conn, bid):
         print('started batcher %d' % bid)
@@ -314,28 +310,11 @@ class Batcher:
         st_block = st // self.args['compress_steps']
         ed_block = (ed - 1) // self.args['compress_steps'] + 1
         ep_minimum = {
+            'replay': ep.get('replay', False),
             'args': ep['args'], 'outcome': ep['outcome'],
             'moment': ep['moment'][st_block:ed_block],
             'base': st_block * self.args['compress_steps'],
             'start': st, 'end': ed, 'train_start': train_st, 'total': ep['steps'],
-        }
-        return ep_minimum
-
-    def select_replay(self):
-        rep_idx = random.randrange(min(len(self.replays), self.args['maximum_replays']))
-        rep = self.replays[rep_idx]
-        turn_candidates = 1 + max(0, rep['steps'] - self.args['forward_steps'])  # change start turn by sequence length
-        train_st = random.randrange(turn_candidates)
-        st = max(0, train_st - self.args['burn_in_steps'])
-        ed = min(train_st + self.args['forward_steps'], rep['steps'])
-        st_block = st // self.args['compress_steps']
-        ed_block = (ed - 1) // self.args['compress_steps'] + 1
-        ep_minimum = {
-            'replay': True,
-            'args': rep['args'], 'outcome': rep['outcome'],
-            'moment': rep['moment'][st_block:ed_block],
-            'base': st_block * self.args['compress_steps'],
-            'start': st, 'end': ed, 'train_start': train_st, 'total': rep['steps'],
         }
         return ep_minimum
 
@@ -346,7 +325,6 @@ class Batcher:
 class Trainer:
     def __init__(self, args, model):
         self.episodes = deque()
-        self.replays = deque()
         self.args = args
         self.gpu = torch.cuda.device_count()
         self.model = model
@@ -356,7 +334,7 @@ class Trainer:
         lr = self.default_lr * self.data_cnt_ema
         self.optimizer = optim.Adam(self.params, lr=lr, weight_decay=1e-5) if len(self.params) > 0 else None
         self.steps = 0
-        self.batcher = Batcher(self.args, self.episodes, self.replays)
+        self.batcher = Batcher(self.args, self.episodes)
         self.update_flag = False
         self.update_queue = queue.Queue(maxsize=1)
 
@@ -442,8 +420,6 @@ class Learner:
         self.shutdown_flag = False
         self.flags = set()
 
-        self.args['maximum_replays'] = args['maximum_episodes'] * args['replay_rate']
-
         # trained datum
         self.model_epoch = self.args['restart_epoch']
         self.model = net if net is not None else self.env.net()
@@ -501,7 +477,22 @@ class Learner:
 
         # store generated episodes
         self.trainer.episodes.extend([e for e in episodes if e is not None])
+        self.check_buffer()
 
+    def feed_replays(self, replays):
+        for replay in replays:
+            if replay is None:
+                continue
+            self.num_returned_episodes += 1
+            self.num_returned_replayed_episodes += 1
+            if self.num_returned_episodes % 100 == 0:
+                print(self.num_returned_episodes, end=' ', flush=True)
+
+        # store loaded replays
+        self.trainer.episodes.extend([r for r in replays if r is not None])
+        self.check_buffer()
+
+    def check_buffer(self):
         mem_percent = psutil.virtual_memory().percent
         mem_ok = mem_percent <= 95
         maximum_episodes = self.args['maximum_episodes'] if mem_ok else int(len(self.trainer.episodes) * 95 / mem_percent)
@@ -512,19 +503,6 @@ class Learner:
 
         while len(self.trainer.episodes) > maximum_episodes:
             self.trainer.episodes.popleft()
-
-    def feed_replays(self, replays):
-        for replay in replays:
-            if replay is None:
-                continue
-            self.num_returned_episodes += 1
-            self.num_returned_replayed_episodes += 1
-            if self.num_returned_episodes % 100 == 0:
-                print(self.num_returned_episodes, end=' ', flush=True)
-        # store loaded replays
-        self.trainer.replays.extend([r for r in replays if r is not None])
-        while len(self.trainer.replays) > self.args['maximum_replays']:
-            self.trainer.replays.popleft()
 
     def feed_results(self, results):
         # store evaluation results
