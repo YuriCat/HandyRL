@@ -19,9 +19,10 @@ class Generator:
 
     def generate(self, models, args):
         # episode generation
-        moments = []
+        moments = {}
         hidden = {}
         for player in self.env.players():
+            moments[player] = []
             hidden[player] = models[player].init_hidden()
 
         err = self.env.reset()
@@ -30,7 +31,8 @@ class Generator:
 
         while not self.env.terminal():
             moment_keys = ['observation', 'selected_prob', 'action_mask', 'action', 'value', 'reward', 'return']
-            moment = {key: {p: None for p in self.env.players()} for key in moment_keys}
+            moment = {player: {key: None for key in moment_keys} for player in self.env.players()}
+            actions = {}
 
             turn_players = self.env.turns()
             observers = self.env.observers()
@@ -46,8 +48,8 @@ class Generator:
                 hidden[player] = outputs.get('hidden', None)
                 v = outputs.get('value', None)
 
-                moment['observation'][player] = obs
-                moment['value'][player] = v
+                moment[player]['observation'] = obs
+                moment[player]['value'] = v
 
                 if player in turn_players:
                     p_ = outputs['policy']
@@ -57,37 +59,40 @@ class Generator:
                     p = softmax(p_ - action_mask)
                     action = random.choices(legal_actions, weights=p[legal_actions])[0]
 
-                    moment['selected_prob'][player] = p[action]
-                    moment['action_mask'][player] = action_mask
-                    moment['action'][player] = action
+                    moment[player]['selected_prob'] = p[action]
+                    moment[player]['action_mask'] = action_mask
+                    moment[player]['action'] = action
+                    actions[player] = action
 
-            err = self.env.step(moment['action'])
+            err = self.env.step(actions)
             if err:
                 return None
 
             reward = self.env.reward()
             for player in self.env.players():
-                moment['reward'][player] = reward.get(player, None)
+                moment[player]['reward'] = reward.get(player, None)
 
-            moment['turn'] = turn_players
-            moments.append(moment)
+            for player, m in moment.items():
+                moments[player].append(moment[player])
 
         if len(moments) < 1:
             return None
 
-        for player in self.env.players():
+        for moment in moments.values():
             ret = 0
-            for i, m in reversed(list(enumerate(moments))):
-                ret = (m['reward'][player] or 0) + self.args['gamma'] * ret
-                moments[i]['return'][player] = ret
+            for i, m in reversed(list(enumerate(moment))):
+                ret = (m['reward'] or 0) + self.args['gamma'] * ret
+                moment[i]['return'] = ret
 
         episode = {
             'args': args, 'steps': len(moments),
             'outcome': self.env.outcome(),
-            'moment': [
-                bz2.compress(pickle.dumps(moments[i:i+self.args['compress_steps']]))
-                for i in range(0, len(moments), self.args['compress_steps'])
-            ]
+            'moment': {
+                player: [
+                    bz2.compress(pickle.dumps(moments_[i:i+self.args['compress_steps']]))
+                    for i in range(0, len(moments_), self.args['compress_steps'])
+                ] for player, moments_ in moments.items()
+            }
         }
 
         return episode

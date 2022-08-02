@@ -53,39 +53,34 @@ def make_batch(episodes, args):
     for ep in episodes:
         moments_ = sum([pickle.loads(bz2.decompress(ms)) for ms in ep['moment']], [])
         moments = moments_[ep['start'] - ep['base']:ep['end'] - ep['base']]
-        players = list(moments[0]['observation'].keys())
-        if not args['turn_based_training']:  # solo training
-            players = [random.choice(players)]
 
         # template for padding
-        obs_zeros = map_r(moments[0]['observation'][moments[0]['turn'][0]], lambda o: np.zeros_like(o))
-        amask_zeros = np.zeros_like(moments[0]['action_mask'][moments[0]['turn'][0]])
+        def find_nonzero(moments, key):
+            for m in moments:
+                if m[key] is not None:
+                    return m[key]
+        obs_zeros = map_r(find_nonzero(moments, 'observation'), lambda o: np.zeros_like(o))
+        amask_zeros = np.zeros_like(find_nonzero(moments, 'action_mask'))
 
         # data that is changed by training configuration
-        if args['turn_based_training'] and not args['observation']:
-            obs = [[m['observation'][m['turn'][0]]] for m in moments]
-            prob = np.array([[[m['selected_prob'][m['turn'][0]]]] for m in moments])
-            act = np.array([[m['action'][m['turn'][0]]] for m in moments], dtype=np.int64)[..., np.newaxis]
-            amask = np.array([[m['action_mask'][m['turn'][0]]] for m in moments])
-        else:
-            obs = [[replace_none(m['observation'][player], obs_zeros) for player in players] for m in moments]
-            prob = np.array([[[replace_none(m['selected_prob'][player], 1.0)] for player in players] for m in moments])
-            act = np.array([[replace_none(m['action'][player], 0) for player in players] for m in moments], dtype=np.int64)[..., np.newaxis]
-            amask = np.array([[replace_none(m['action_mask'][player], amask_zeros + 1e32) for player in players] for m in moments])
+        obs = [[replace_none(m['observation'], obs_zeros)] for m in moments]
+        prob = np.array([[[replace_none(m['selected_prob'], 1.0)]] for m in moments])
+        act = np.array([[replace_none(m['action'], 0)] for m in moments], dtype=np.int64)[..., np.newaxis]
+        amask = np.array([[replace_none(m['action_mask'], amask_zeros + 1e32)] for m in moments])
 
         # reshape observation
         obs = rotate(rotate(obs))  # (T, P, ..., ...) -> (P, ..., T, ...) -> (..., T, P, ...)
         obs = bimap_r(obs_zeros, obs, lambda _, o: np.array(o))
 
         # datum that is not changed by training configuration
-        v = np.array([[replace_none(m['value'][player], [0]) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
-        rew = np.array([[replace_none(m['reward'][player], [0]) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
-        ret = np.array([[replace_none(m['return'][player], [0]) for player in players] for m in moments], dtype=np.float32).reshape(len(moments), len(players), -1)
-        oc = np.array([ep['outcome'][player] for player in players], dtype=np.float32).reshape(1, len(players), -1)
+        v = np.array([[replace_none(m['value'], [0])] for m in moments], dtype=np.float32).reshape(len(moments), 1, -1)
+        rew = np.array([[replace_none(m['reward'], [0])] for m in moments], dtype=np.float32).reshape(len(moments), 1, -1)
+        ret = np.array([[replace_none(m['return'], [0])] for m in moments], dtype=np.float32).reshape(len(moments), 1, -1)
+        oc = np.array([ep['outcome']], dtype=np.float32).reshape(1, 1, -1)
 
         emask = np.ones((len(moments), 1, 1), dtype=np.float32)  # episode mask
-        tmask = np.array([[[m['selected_prob'][player] is not None] for player in players] for m in moments], dtype=np.float32)
-        omask = np.array([[[m['observation'][player] is not None] for player in players] for m in moments], dtype=np.float32)
+        tmask = np.array([[[m['selected_prob'] is not None]] for m in moments], dtype=np.float32)
+        omask = np.array([[[m['observation'] is not None]] for m in moments], dtype=np.float32)
 
         progress = np.arange(ep['start'], ep['end'], dtype=np.float32)[..., np.newaxis] / ep['total']
 
@@ -298,9 +293,10 @@ class Batcher:
         ed = min(train_st + self.args['forward_steps'], ep['steps'])
         st_block = st // self.args['compress_steps']
         ed_block = (ed - 1) // self.args['compress_steps'] + 1
+        player = random.choice(ep['args']['player'])
         ep_minimum = {
-            'args': ep['args'], 'outcome': ep['outcome'],
-            'moment': ep['moment'][st_block:ed_block],
+            'args': ep['args'], 'outcome': ep['outcome'][player],
+            'moment': ep['moment'][player][st_block:ed_block],
             'base': st_block * self.args['compress_steps'],
             'start': st, 'end': ed, 'train_start': train_st, 'total': ep['steps'],
         }
