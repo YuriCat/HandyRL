@@ -147,9 +147,13 @@ def forward_prediction(model, hidden, batch, args):
         outputs = map_r(outputs, lambda o: o.unflatten(0, batch_shape))  # (..., B, T, P or 1, ...)
     else:
         # sequential computation with RNN
-        outputs = {}
+        obs = map_r(observations, lambda o: o.flatten(0, 2))  # (..., B * T * P or 1, ...)
+        encoded_ = model.model.encoder(obs)
+        encoded = map_r(encoded_, lambda e: e.unflatten(0, batch_shape))  # (..., B, T, P or 1, ...)
+
+        inter_state = []
         for t in range(batch_shape[1]):
-            obs = map_r(observations, lambda o: o[:, t].flatten(0, 1))  # (..., B * P or 1, ...)
+            enc = map_r(encoded, lambda e: e[:, t].flatten(0, 1))  # (..., B * P or 1, ...)
             omask_ = batch['observation_mask'][:, t]
             omask = map_r(hidden, lambda h: omask_.view(*h.size()[:2], *([1] * (h.dim() - 2))))
             hidden_ = bimap_r(hidden, omask, lambda h, m: h * m)  # (..., B, P, ...)
@@ -160,19 +164,20 @@ def forward_prediction(model, hidden, batch, args):
             if t < args['burn_in_steps']:
                 model.eval()
                 with torch.no_grad():
-                    outputs_ = model(obs, hidden_)
+                    inter_state_, next_hidden = model.model.body(enc, hidden_)
             else:
                 if not model.training:
                     model.train()
-                outputs_ = model(obs, hidden_)
-            outputs_ = map_r(outputs_, lambda o: o.unflatten(0, (batch_shape[0], batch_shape[2])))  # (..., B, P or 1, ...)
-            for k, o in outputs_.items():
-                if k == 'hidden':
-                    next_hidden = o
-                else:
-                    outputs[k] = outputs.get(k, []) + [o]
+                inter_state_, next_hidden = model.model.body(enc, hidden_)
+            inter_state_ = map_r(inter_state_, lambda s: s.unflatten(0, (batch_shape[0], batch_shape[2])))  # (..., B, P or 1, ...)
+            next_hidden = map_r(next_hidden, lambda h: h.unflatten(0, (batch_shape[0], batch_shape[2])))  # (..., B, P or 1, ...)
             hidden = trimap_r(hidden, next_hidden, omask, lambda h, nh, m: h * (1 - m) + nh * m)
-        outputs = {k: torch.stack(o, dim=1) for k, o in outputs.items() if o[0] is not None}
+            inter_state.append(inter_state_)
+
+        inter_state = bimap_r(inter_state[0], rotate(inter_state), lambda _, s: torch.stack(s, dim=1))
+        inter_state = map_r(inter_state, lambda s: s.flatten(0, 2))  # (..., B * T * P or 1, ...)
+        outputs = model.model.head(inter_state)
+        outputs = map_r(outputs, lambda o: o.unflatten(0, batch_shape))  # (..., B, T, P or 1, ...)
 
     for k, o in outputs.items():
         if k == 'policy':

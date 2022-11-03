@@ -63,9 +63,10 @@ class ConvLSTMCell(nn.Module):
 # When num_repeats=1, it is simply a multi-layer Conv-LSTM.
 
 class DRC(nn.Module):
-    def __init__(self, num_layers, input_dim, hidden_dim, kernel_size=3, bias=True):
+    def __init__(self, num_layers, input_dim, hidden_dim, kernel_size=3, bias=True, num_repeats=None):
         super().__init__()
         self.num_layers = num_layers
+        self.num_repeats = num_repeats
 
         blocks = []
         for _ in range(self.num_layers):
@@ -85,9 +86,11 @@ class DRC(nn.Module):
             cs.append(c)
         return hs, cs
 
-    def forward(self, x, hidden, num_repeats):
+    def forward(self, x, hidden, num_repeats=None):
         if hidden is None:
             hidden = self.init_hidden(x.shape[-2:], x.shape[:-3])
+        if num_repeats is None:
+            num_repeats = self.num_repeats
 
         hs, cs = hidden
         for _ in range(num_repeats):
@@ -127,6 +130,37 @@ class ScalarHead(nn.Module):
         return h
 
 
+class GeisterEncoder(nn.Module):
+    def __init__(self, input_channels, filters):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_channels, filters, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(filters)
+
+    def forward(self, x):
+        b, s = x['board'], x['scalar']
+        h_s = s.view(*s.size(), 1, 1).repeat(1, 1, 6, 6)
+        h = torch.cat([h_s, b], -3)
+        h = F.relu(self.bn1(self.conv1(h)))
+        return h
+
+
+class GeisterHead(nn.Module):
+    def __init__(self, filters, p_filters, v_filters):
+        super().__init__()
+        self.head_p_move = Conv2dHead((filters, 6, 6), p_filters, 4)
+        self.head_p_set = ScalarHead((filters, 6, 6), 1, 70)
+        self.head_v = ScalarHead((filters, 6, 6), v_filters, 1)
+        self.head_r = ScalarHead((filters, 6, 6), v_filters, 1)
+
+    def forward(self, h):
+        h_p_move = self.head_p_move(h)
+        h_p_set = self.head_p_set(h)
+        h_p = torch.cat([h_p_move, h_p_set], -1)
+        h_v = self.head_v(h)
+        h_r = self.head_r(h)
+        return {'policy': h_p, 'value': torch.tanh(h_v), 'return': h_r}
+
+
 class GeisterNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -136,34 +170,18 @@ class GeisterNet(nn.Module):
         input_channels = 7 + 18  # board channels + scalar inputs
         self.input_size = (input_channels, 6, 6)
 
-        self.conv1 = nn.Conv2d(input_channels, filters, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(filters)
-        self.body = DRC(layers, filters, filters)
-
-        self.head_p_move = Conv2dHead((filters, 6, 6), p_filters, 4)
-        self.head_p_set = nn.Linear(1, 70, bias=True)
-        self.head_v = ScalarHead((filters, 6, 6), v_filters, 1)
-        self.head_r = ScalarHead((filters, 6, 6), v_filters, 1)
+        self.encoder = GeisterEncoder(input_channels, filters)
+        self.body = DRC(layers, filters, filters, num_repeats=3)
+        self.head = GeisterHead(filters, p_filters, v_filters)
 
     def init_hidden(self, batch_size=[]):
         return self.body.init_hidden(self.input_size[1:], batch_size)
 
     def forward(self, x, hidden):
-        b, s = x['board'], x['scalar']
-        h_s = s.view(*s.size(), 1, 1).repeat(1, 1, 6, 6)
-        h = torch.cat([h_s, b], -3)
-
-        h_e = F.relu(self.bn1(self.conv1(h)))
-        h, hidden = self.body(h_e, hidden, num_repeats=3)
-
-        h_p_move = self.head_p_move(h)
-        turn_color = s[:, :1]
-        h_p_set = self.head_p_set(turn_color)
-        h_p = torch.cat([h_p_move, h_p_set], -1)
-        h_v = self.head_v(h)
-        h_r = self.head_r(h)
-
-        return {'policy': h_p, 'value': torch.tanh(h_v), 'return': h_r, 'hidden': hidden}
+        h = self.encoder(x)
+        h, hidden = self.body(h, hidden)
+        outputs = self.head(h)
+        return {**outputs, 'hidden': hidden}
 
 
 class Environment(BaseEnvironment):
