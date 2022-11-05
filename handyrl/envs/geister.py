@@ -186,10 +186,11 @@ class Environment(BaseEnvironment):
 
     def __init__(self, args=None):
         super().__init__()
+        self.args = args if args is not None else {}
         self.reset()
 
-    def reset(self, args={}):
-        self.args = args
+    def reset(self, args=None):
+        self.game_args = args if args is not None else {}
         self.board = -np.ones((6, 6), dtype=np.int32)  # (x, y) -1 is empty
         self.color = self.BLACK
         self.turn_count = -2  # before setting original positions
@@ -340,8 +341,9 @@ class Environment(BaseEnvironment):
         s = '  ' + ' '.join(self.Y) + '\n'
         for i in range(6):
             s += self.X[i] + ' ' + ' '.join([self.P[_piece(self.board[i, j])] for j in range(6)]) + '\n'
-        s += 'color = ' + self.C[self.color] + '\n'
-        s += 'record = ' + self.record_string()
+        s += 'remained = B:%d R:%d b:%d r:%d' % tuple(self.piece_cnt) + '\n'
+        s += 'turn = ' + str(self.turn_count).ljust(3) + ' color = ' + self.C[self.color]
+        # s += 'record = ' + self.record_string()
         return s
 
     def _set(self, layout):
@@ -406,7 +408,7 @@ class Environment(BaseEnvironment):
 
     def update(self, info, reset):
         if reset:
-            self.args = {**self.args, **info}
+            self.game_args = {**self.game_args, **info}
             self.reset(info)
         elif 'set' in info:
             self._set(info['set'])
