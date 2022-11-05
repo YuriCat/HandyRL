@@ -210,9 +210,10 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
-    entropy = F.softmax(-batch['action_mask'], -1) * F.log_softmax(outputs['policy'], -1) * tmasks
-    entropy_loss = entropy.mul(1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
-    losses['total'] = base_loss + entropy_loss
+    kl_uniform = -(F.softmax(-batch['action_mask'], -1) * F.log_softmax(outputs['policy'], -1)).sum(-1) * tmasks.sum(-1)
+    losses['klu'] = kl_uniform.sum()
+    log_reguralization_loss = kl_uniform.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * args['entropy_regularization']
+    losses['total'] = base_loss + log_reguralization_loss
 
     return losses, dcnt
 
