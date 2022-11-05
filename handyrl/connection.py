@@ -161,24 +161,27 @@ class QueueCommunicator:
     def __init__(self, conns=[]):
         self.input_queue = queue.Queue(maxsize=256)
         self.output_queue = queue.Queue(maxsize=256)
-        self.conns = []
+        self.conns = set()
         for conn in conns:
             self.add_connection(conn)
         threading.Thread(target=self._send_thread, daemon=True).start()
         threading.Thread(target=self._recv_thread, daemon=True).start()
 
-    def recv(self):
-        return self.input_queue.get()
+    def connection_count(self):
+        return len(self.conns)
+
+    def recv(self, timeout=None):
+        return self.input_queue.get(timeout=timeout)
 
     def send(self, conn, send_data):
         self.output_queue.put((conn, send_data))
 
     def add_connection(self, conn):
-        self.conns.append(conn)
+        self.conns.add(conn)
 
     def disconnect(self, conn):
         print('disconnected')
-        self.conns.remove(conn)
+        self.conns.discard(conn)
 
     def _send_thread(self):
         while True:
