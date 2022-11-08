@@ -50,14 +50,16 @@ class Generator:
                 moment['value'][player] = v
 
                 if player in turn_players:
-                    p_ = outputs['policy']
+                    p_ = outputs['policy'].reshape(self.env.num_units(), -1)
                     legal_actions = self.env.legal_actions(player)
                     action_mask = np.ones_like(p_) * 1e32
-                    action_mask[legal_actions] = 0
+                    for i in range(p_.shape[0]):
+                        legal_actions = self.env.legal_actions(player, i)
+                        action_mask[i, legal_actions] = 0
                     p = softmax(p_ - action_mask)
-                    action = random.choices(legal_actions, weights=p[legal_actions])[0]
+                    action = [random.choices(np.arange(p.shape[-1]), weights=p[i])[0] for i in range(p.shape[0])]
 
-                    moment['selected_prob'][player] = p[action]
+                    moment['selected_prob'][player] = np.take_along_axis(p, np.array(action)[:, None], -1)[:, 0]
                     moment['action_mask'][player] = action_mask
                     moment['action'][player] = action
 
