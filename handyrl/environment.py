@@ -120,6 +120,9 @@ class BaseEnvironment:
     def num_units(self):
         return 1
 
+    def active_units(self):
+        return [0]
+
     #
     # Should be defined in all games
     #

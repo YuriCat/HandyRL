@@ -29,7 +29,7 @@ class Generator:
             return None
 
         while not self.env.terminal():
-            moment_keys = ['observation', 'selected_prob', 'action_mask', 'action', 'value', 'reward', 'return']
+            moment_keys = ['observation', 'selected_prob', 'action_mask', 'unit_mask', 'action', 'value', 'reward', 'return']
             moment = {key: {p: None for p in self.env.players()} for key in moment_keys}
 
             turn_players = self.env.turns()
@@ -52,13 +52,18 @@ class Generator:
                 if player in turn_players:
                     p_ = outputs['policy'].reshape(self.env.num_units(), -1)
                     legal_actions = self.env.legal_actions(player)
+                    active_units = self.env.active_units()
                     action_mask = np.ones_like(p_) * 1e32
+                    unit_mask = np.zeros(len(p_))
+                    unit_mask[active_units] = 1
                     for i in range(p_.shape[0]):
-                        legal_actions = self.env.legal_actions(player, i)
-                        action_mask[i, legal_actions] = 0
+                        if unit_mask[i]:
+                            legal_actions = self.env.legal_actions(player, i)
+                            action_mask[i, legal_actions] = 0
                     p = softmax(p_ - action_mask)
                     action = [random.choices(np.arange(p.shape[-1]), weights=p[i])[0] for i in range(p.shape[0])]
 
+                    moment['unit_mask'][player] = unit_mask
                     moment['selected_prob'][player] = np.take_along_axis(p, np.array(action)[:, None], -1)[:, 0]
                     moment['action_mask'][player] = action_mask
                     moment['action'][player] = action

@@ -67,11 +67,13 @@ def make_batch(episodes, args):
             prob = np.array([[[m['selected_prob'][m['turn'][0]]]] for m in moments])
             act = np.array([[m['action'][m['turn'][0]]] for m in moments], dtype=np.int64)[..., np.newaxis]
             amask = np.array([[m['action_mask'][m['turn'][0]]] for m in moments])
+            umask = np.array([[m['unit_mask'][m['turn'][0]]] for m in moments])
         else:
             obs = [[replace_none(m['observation'][player], obs_zeros) for player in players] for m in moments]
             prob = np.array([[[replace_none(m['selected_prob'][player], 1.0)] for player in players] for m in moments])
             act = np.array([[replace_none(m['action'][player], 0) for player in players] for m in moments], dtype=np.int64)[..., np.newaxis]
             amask = np.array([[replace_none(m['action_mask'][player], amask_zeros + 1e32) for player in players] for m in moments])
+            umask = np.array([[replace_none(m['unit_mask'][player], amask_zeros[0]) for player in players] for m in moments])
 
         # reshape observation
         obs = rotate(rotate(obs))  # (T, P, ..., ...) -> (P, ..., T, ...) -> (..., T, P, ...)
@@ -104,13 +106,14 @@ def make_batch(episodes, args):
             tmask = np.pad(tmask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             omask = np.pad(omask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             amask = np.pad(amask, [(pad_len_b, pad_len_a), (0, 0), (0, 0), (0, 0)], 'constant', constant_values=1e32)
+            umask = np.pad(umask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             progress = np.pad(progress, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=1)
 
         obss.append(obs)
-        datum.append((prob, v, act, oc, rew, ret, emask, tmask, omask, amask, progress))
+        datum.append((prob, v, act, oc, rew, ret, emask, tmask, omask, amask, umask, progress))
 
     obs = to_torch(bimap_r(obs_zeros, rotate(obss), lambda _, o: np.array(o)))
-    prob, v, act, oc, rew, ret, emask, tmask, omask, amask, progress = [to_torch(np.array(val)) for val in zip(*datum)]
+    prob, v, act, oc, rew, ret, emask, tmask, omask, amask, umask, progress = [to_torch(np.array(val)) for val in zip(*datum)]
 
     return {
         'observation': obs,
@@ -121,6 +124,7 @@ def make_batch(episodes, args):
         'episode_mask': emask,
         'turn_mask': tmask, 'observation_mask': omask,
         'action_mask': amask,
+        'unit_mask': umask,
         'progress': progress,
     }
 
@@ -180,7 +184,7 @@ def forward_prediction(model, hidden, batch, args):
             o = o.mul(batch['turn_mask'].unsqueeze(-1))
             if o.size(2) > 1 and batch_shape[2] == 1:  # turn-alternating batch
                 o = o.sum(2, keepdim=True)  # gather turn player's policies
-            outputs[k] = o - batch['action_mask']
+            outputs[k] = o * batch['unit_mask'].unsqueeze(-1) - batch['action_mask']
         else:
             # mask valid target values and cumulative rewards
             outputs[k] = o.mul(batch['observation_mask'])
@@ -197,17 +201,18 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
 
     tmasks = batch['turn_mask'].unsqueeze(-1).repeat(1, 1, 1, log_selected_policies.size(-2), 1)
     omasks = batch['observation_mask']
+    umasks = batch['unit_mask']
 
     losses = {}
     dcnt = tmasks.sum().item()
 
-    losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).sum()
+    losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).mul(umasks.unsqueeze(-1)).sum()
     if 'value' in outputs:
         losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
         losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
 
-    entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.squeeze(-1))
+    entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.squeeze(-1)).mul(umasks)
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
