@@ -359,6 +359,10 @@ class Environment(BaseEnvironment):
 
     def play(self, action, _=None):
         # state transition
+        from collections.abc import Iterable
+        if isinstance(action, Iterable):
+            action = action[0]
+
         if self.turn_count < 0:
             layout = action - 4 * 6 * 6
             return self._set(layout)
@@ -472,7 +476,7 @@ class Environment(BaseEnvironment):
             # can move to my goal
             return t == self.BLUE and self.goal(c, pos_to)
 
-    def legal_actions(self, _=None):
+    def legal_actions(self, _=None, __=None):
         # return legal action list
         if self.turn_count < 0:
             return [4 * 6 * 6 + i for i in range(70)]
