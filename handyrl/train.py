@@ -480,15 +480,15 @@ class Learner:
                 continue
             for p in result['args']['player']:
                 model_id = result['args']['model_id'][p]
-                res = result['result'][p]
+                outcome = result['outcome'][p]
                 n, r, r2 = self.results.get(model_id, (0, 0, 0))
-                self.results[model_id] = n + 1, r + res, r2 + res ** 2
+                self.results[model_id] = n + 1, r + outcome, r2 + outcome ** 2
 
                 if model_id not in self.results_per_opponent:
                     self.results_per_opponent[model_id] = {}
                 opponent = result['opponent']
                 n, r, r2 = self.results_per_opponent[model_id].get(opponent, (0, 0, 0))
-                self.results_per_opponent[model_id][opponent] = n + 1, r + res, r2 + res ** 2
+                self.results_per_opponent[model_id][opponent] = n + 1, r + outcome, r2 + outcome ** 2
 
     def update(self):
         # call update to every component
