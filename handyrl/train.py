@@ -24,7 +24,7 @@ import psutil
 
 from .environment import prepare_env, make_env
 from .util import map_r, bimap_r, trimap_r, rotate
-from .model import to_torch, to_gpu, ModelWrapper
+from .model import to_torch, to_gpu, ModelWrapper, RandomModel
 from .losses import compute_target
 from .connection import MultiProcessJobExecutor
 from .worker import WorkerCluster, WorkerServer
@@ -319,12 +319,12 @@ class Batcher:
 
 
 class Trainer:
-    def __init__(self, args, model):
+    def __init__(self, args, model, random_model):
         self.episodes = deque()
         self.args = args
         self.gpu = torch.cuda.device_count()
         self.model = model
-        self.reg_models = [model] * 10
+        self.reg_models = [random_model]
         self.default_lr = 3e-8
         self.data_cnt_ema = self.args['batch_size'] * self.args['forward_steps']
         self.params = list(self.model.parameters())
@@ -340,9 +340,10 @@ class Trainer:
         if self.gpu > 1:
             self.trained_model = nn.DataParallel(self.wrapped_model)
 
-    def update(self):
+    def update(self, reg_models):
         self.update_flag = True
         model, steps = self.update_queue.get()
+        self.reg_models = reg_models + [model]
         return model, steps
 
     def train(self):
@@ -385,14 +386,13 @@ class Trainer:
             self.steps += 1
 
         print('loss = %s' % ' '.join([k + ':' + '%.3f' % (l / data_cnt) for k, l in loss_sum.items()]))
-
         self.data_cnt_ema = self.data_cnt_ema * 0.8 + data_cnt / (1e-2 + batch_cnt) * 0.2
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = self.default_lr * self.data_cnt_ema / (1 + self.steps * 1e-5)
+
         self.model.cpu()
         self.model.eval()
         model = copy.deepcopy(self.model)
-        self.reg_models = self.reg_models[1:] + [model]
         return model
 
     def run(self):
@@ -430,6 +430,8 @@ class Learner:
         self.model = net if net is not None else self.env.net()
         if self.model_epoch > 0:
             self.model.load_state_dict(torch.load(self.model_path(self.model_epoch)), strict=False)
+        obs = self.env.observation(self.env.players()[0])
+        self.random_model = RandomModel(self.model, obs)
 
         # generated datum
         self.generation_results = {}
@@ -445,7 +447,7 @@ class Learner:
         self.worker = WorkerServer(args) if remote else WorkerCluster(args)
 
         # thread connection
-        self.trainer = Trainer(args, self.model)
+        self.trainer = Trainer(args, self.model, self.random_model)
 
     def model_path(self, model_id):
         return os.path.join('models', str(model_id) + '.pth')
@@ -537,7 +539,26 @@ class Learner:
             std = (r2 / (n + 1e-6) - mean ** 2) ** 0.5
             print('generation stats = %.3f +- %.3f' % (mean, std))
 
-        model, steps = self.trainer.update()
+        # prepare next reg_models
+        reg_models = []
+        for i in [2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181]:
+            last = False
+            epoch = self.model_epoch + 1 - i
+            if epoch <= 0:
+                reg_model = self.random_model
+                last = True
+            else:
+                reg_model = copy.deepcopy(self.model)
+                while True:
+                    try:
+                        reg_model.load_state_dict(torch.load(self.model_path(epoch)), strict=False)
+                        break
+                    except:
+                        continue
+            reg_models.append(reg_model)
+            if last:
+                break
+        model, steps = self.trainer.update(reg_models)
         if model is None:
             model = self.model
         self.update_model(model, steps)
