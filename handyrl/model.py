@@ -70,5 +70,13 @@ class RandomModel(nn.Module):
         outputs = wrapped_model.inference(x, hidden)
         self.output_dict = {key: np.zeros_like(value) for key, value in outputs.items() if key != 'hidden'}
 
+    def forward(self, x, hidden, **kwargs):
+        tensors = []
+        map_r(x, lambda y: tensors.append(y))
+        outputs = map_r(self.output_dict, lambda o: torch.from_numpy(o).to(tensors[0].device).unsqueeze(0).repeat(tensors[0].size(0), *([1] * len(o.shape))))
+        if hidden is not None:
+            outputs['hidden'] = hidden
+        return outputs
+
     def inference(self, *args, **kwargs):
         return self.output_dict
