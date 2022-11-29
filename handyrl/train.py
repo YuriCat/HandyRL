@@ -187,7 +187,7 @@ def forward_prediction(model, hidden, batch, args):
     return outputs
 
 
-def compose_losses(outputs, log_selected_policies, total_advantages, targets, batch, args):
+def compose_losses(outputs, reg_outputs, log_selected_policies, total_advantages, targets, batch, args):
     """Caluculate loss value
 
     Returns:
@@ -209,18 +209,22 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
+    losses['kl'] = F.kl_div(F.log_softmax(outputs['policy'], -1), F.softmax(reg_outputs['policy'], -1), reduction='none').mul(tmasks).sum()
+
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
     entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
-    losses['total'] = base_loss + entropy_loss
+    kl_loss = losses.get('kl', 0) * args.get('kl_regularization', 1e-1)
+    losses['total'] = base_loss + entropy_loss + kl_loss
 
     return losses, dcnt
 
 
-def compute_loss(batch, model, hidden, args):
+def compute_loss(batch, model, reg_outputs, hidden, args):
     outputs = forward_prediction(model, hidden, batch, args)
     if args['burn_in_steps'] > 0:
         batch = map_r(batch, lambda v: v[:, args['burn_in_steps']:] if v.size(1) > 1 else v)
         outputs = map_r(outputs, lambda v: v[:, args['burn_in_steps']:])
+        reg_outputs = map_r(reg_outputs, lambda v: v[:, args['burn_in_steps']:])
 
     actions = batch['action']
     emasks = batch['episode_mask']
@@ -260,7 +264,7 @@ def compute_loss(batch, model, hidden, args):
     # compute policy advantage
     total_advantages = clipped_rhos * sum(advantages.values())
 
-    return compose_losses(outputs, log_selected_t_policies, total_advantages, targets, batch, args)
+    return compose_losses(outputs, reg_outputs, log_selected_t_policies, total_advantages, targets, batch, args)
 
 
 class Batcher:
@@ -320,6 +324,7 @@ class Trainer:
         self.args = args
         self.gpu = torch.cuda.device_count()
         self.model = model
+        self.reg_models = [model] * 10
         self.default_lr = 3e-8
         self.data_cnt_ema = self.args['batch_size'] * self.args['forward_steps']
         self.params = list(self.model.parameters())
@@ -359,7 +364,13 @@ class Trainer:
                 batch = to_gpu(batch)
                 hidden = to_gpu(hidden)
 
-            losses, dcnt = compute_loss(batch, self.trained_model, hidden, self.args)
+            reg_model = random.choice(self.reg_models)
+            if self.gpu > 0:
+                reg_model.cuda()
+            with torch.inference_mode():
+                reg_outputs = forward_prediction(reg_model, hidden, batch, self.args)
+            reg_model.cpu()
+            losses, dcnt = compute_loss(batch, self.trained_model, reg_outputs, hidden, self.args)
 
             self.optimizer.zero_grad()
             losses['total'].backward()
@@ -380,7 +391,9 @@ class Trainer:
             param_group['lr'] = self.default_lr * self.data_cnt_ema / (1 + self.steps * 1e-5)
         self.model.cpu()
         self.model.eval()
-        return copy.deepcopy(self.model)
+        model = copy.deepcopy(self.model)
+        self.reg_models = self.reg_models[1:] + [model]
+        return model
 
     def run(self):
         print('waiting training')
