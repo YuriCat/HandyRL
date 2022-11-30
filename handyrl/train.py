@@ -344,6 +344,7 @@ class Trainer:
         self.update_flag = True
         model, steps = self.update_queue.get()
         self.reg_models = reg_models + [model]
+        random.shuffle(self.reg_models)
         return model, steps
 
     def train(self):
@@ -365,7 +366,8 @@ class Trainer:
                 batch = to_gpu(batch)
                 hidden = to_gpu(hidden)
 
-            reg_model = random.choice(self.reg_models)
+            reg_model = self.reg_models[0]
+            self.reg_models = self.reg_models[1:] + [reg_model]
             if self.gpu > 0:
                 reg_model.cuda()
             with torch.inference_mode():
@@ -541,9 +543,9 @@ class Learner:
 
         # prepare next reg_models
         reg_models = []
-        for i in [2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181]:
+        for i in [2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181, 6765, 10946, 17711, 28657]:
             last = False
-            epoch = self.model_epoch + 1 - i
+            epoch = self.model_epoch + 2 - i
             if epoch <= 0:
                 reg_model = self.random_model
                 last = True
