@@ -288,7 +288,7 @@ class Batcher:
         while True:
             ep_count = min(len(self.episodes), self.args['maximum_episodes'])
             ep_idx = random.randrange(ep_count)
-            accept_rate = 1 - (ep_count - 1 - ep_idx) / ep_count
+            accept_rate = 1
             if random.random() >= accept_rate:
                 continue
             try:
@@ -464,6 +464,16 @@ class Learner:
                 print(self.num_returned_episodes, end=' ', flush=True)
 
         # store generated episodes
+        for e in episodes:
+            if e is None:
+                continue
+            if len(self.trainer.episodes) == 0:
+                self.trainer.episodes.append(e)
+            else:
+                index = random.randrange(min(self.args['maximum_episodes'], len(self.trainer.episodes)))
+                self.trainer.episodes.append(self.trainer.episodes[index])
+                self.trainer.episodes[index] = e
+
         self.trainer.episodes.extend([e for e in episodes if e is not None])
 
         mem_percent = psutil.virtual_memory().percent
