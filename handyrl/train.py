@@ -212,7 +212,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
     kl = (torch.clamp(outputs['rho'] - 1, -1, 1e4) * log_selected_policies).mul(tmasks)
     losses['kl'] = kl.sum()
-    kl_loss = entropy.mul(1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])).sum() * args['entropy_regularization']
+    kl_loss = kl.mul(1 - batch['progress'].unsqueeze(-1) * (1 - args['entropy_regularization_decay'])).sum() * args['entropy_regularization']
     losses['total'] = base_loss + kl_loss
 
     return losses, dcnt
