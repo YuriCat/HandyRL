@@ -474,8 +474,6 @@ class Learner:
                 self.trainer.episodes.append(self.trainer.episodes[index])
                 self.trainer.episodes[index] = e
 
-        self.trainer.episodes.extend([e for e in episodes if e is not None])
-
         mem_percent = psutil.virtual_memory().percent
         mem_ok = mem_percent <= 95
         maximum_episodes = self.args['maximum_episodes'] if mem_ok else int(len(self.trainer.episodes) * 95 / mem_percent)
