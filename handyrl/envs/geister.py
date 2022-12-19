@@ -103,11 +103,10 @@ class Conv2dHead(nn.Module):
         self.outputs = input_shape[1] * input_shape[2] * output_filters
 
         self.conv1 = nn.Conv2d(input_shape[0], filters, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn = nn.BatchNorm2d(filters)
         self.conv2 = nn.Conv2d(filters, output_filters, kernel_size=1, bias=False)
 
     def forward(self, x):
-        h = F.relu(self.bn(self.conv1(x)))
+        h = F.relu(self.conv1(x))
         h = self.conv2(h).view(-1, self.outputs)
         return h
 
@@ -118,11 +117,10 @@ class ScalarHead(nn.Module):
         self.hidden_units = input_shape[1] * input_shape[2] * filters
 
         self.conv = nn.Conv2d(input_shape[0], filters, kernel_size=1, bias=False)
-        self.bn = nn.BatchNorm2d(filters)
         self.fc = nn.Linear(input_shape[1] * input_shape[2] * filters, outputs, bias=False)
 
     def forward(self, x):
-        h = F.relu(self.bn(self.conv(x)))
+        h = F.relu(self.conv(x))
         h = self.fc(h.view(-1, self.hidden_units))
         return h
 
@@ -137,7 +135,6 @@ class GeisterNet(nn.Module):
         self.input_size = (input_channels, 6, 6)
 
         self.conv1 = nn.Conv2d(input_channels, filters, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(filters)
         self.body = DRC(layers, filters, filters)
 
         self.head_p_move = Conv2dHead((filters, 6, 6), p_filters, 4)
@@ -153,7 +150,7 @@ class GeisterNet(nn.Module):
         h_s = s.view(*s.size(), 1, 1).repeat(1, 1, 6, 6)
         h = torch.cat([h_s, b], -3)
 
-        h_e = F.relu(self.bn1(self.conv1(h)))
+        h_e = F.relu(self.conv1(h))
         h, hidden = self.body(h_e, hidden, num_repeats=3)
 
         h_p_move = self.head_p_move(h)
