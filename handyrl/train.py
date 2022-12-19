@@ -125,7 +125,7 @@ def make_batch(episodes, args):
     }
 
 
-def forward_prediction(model, hidden, batch, args):
+def forward_prediction(model, hidden, batch, args, batch_burn_in=None):
     """Forward calculation via neural network
 
     Args:
@@ -147,31 +147,38 @@ def forward_prediction(model, hidden, batch, args):
         outputs = map_r(outputs, lambda o: o.unflatten(0, batch_shape))  # (..., B, T, P or 1, ...)
     else:
         # sequential computation with RNN
-        obs = map_r(observations, lambda o: o.flatten(0, 2))  # (..., B * T * P or 1, ...)
-        encoded_ = model.model.encoder(obs)
-        encoded = map_r(encoded_, lambda e: e.unflatten(0, batch_shape))  # (..., B, T, P or 1, ...)
-
-        inter_state = []
-        for t in range(batch_shape[1]):
+        def compute_body(encoded, omasks, t, hidden):
             enc = map_r(encoded, lambda e: e[:, t].flatten(0, 1))  # (..., B * P or 1, ...)
-            omask_ = batch['observation_mask'][:, t]
+            omask_ = omasks[:, t]
             omask = map_r(hidden, lambda h: omask_.view(*h.size()[:2], *([1] * (h.dim() - 2))))
             hidden_ = bimap_r(hidden, omask, lambda h, m: h * m)  # (..., B, P, ...)
             if args['turn_based_training'] and not args['observation']:
                 hidden_ = map_r(hidden_, lambda h: h.sum(1))  # (..., B * 1, ...)
             else:
                 hidden_ = map_r(hidden_, lambda h: h.flatten(0, 1))  # (..., B * P, ...)
-            if t < args['burn_in_steps']:
-                model.eval()
-                with torch.no_grad():
-                    inter_state_, next_hidden = model.model.body(enc, hidden_)
-            else:
-                if not model.training:
-                    model.train()
-                inter_state_, next_hidden = model.model.body(enc, hidden_)
+            inter_state_, next_hidden = model.model.body(enc, hidden_)
             inter_state_ = map_r(inter_state_, lambda s: s.unflatten(0, (batch_shape[0], batch_shape[2])))  # (..., B, P or 1, ...)
             next_hidden = map_r(next_hidden, lambda h: h.unflatten(0, (batch_shape[0], batch_shape[2])))  # (..., B, P or 1, ...)
             hidden = trimap_r(hidden, next_hidden, omask, lambda h, nh, m: h * (1 - m) + nh * m)
+            return inter_state_, hidden
+
+        if args['burn_in_steps'] > 0:
+            burn_in_batch_shape = batch_shape[0], args['burn_in_steps'], batch_shape[2]
+            model.eval()
+            with torch.no_grad():
+                obs = map_r(batch_burn_in['observation'], lambda o: o.flatten(0, 2))  # (..., B * P or 1, ...)
+                encoded_ = model.model.encoder(obs)
+                encoded = map_r(encoded_, lambda e: e.unflatten(0, burn_in_batch_shape))  # (..., B, T, P or 1, ...)
+                for t in range(args['burn_in_steps']):
+                    _, hidden = compute_body(encoded, batch_burn_in['observation_mask'], t, hidden)
+            model.train()
+
+        obs = map_r(observations, lambda o: o.flatten(0, 2))  # (..., B * P or 1, ...)
+        encoded_ = model.model.encoder(obs)
+        encoded = map_r(encoded_, lambda e: e.unflatten(0, batch_shape))  # (..., B, T, P or 1, ...)
+        inter_state = []
+        for t in range(batch_shape[1]):
+            inter_state_, hidden = compute_body(encoded, batch['observation_mask'], t, hidden)
             inter_state.append(inter_state_)
 
         inter_state = bimap_r(inter_state[0], rotate(inter_state), lambda _, s: torch.stack(s, dim=1))
@@ -222,10 +229,11 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
 
 
 def compute_loss(batch, model, hidden, args):
-    outputs = forward_prediction(model, hidden, batch, args)
+    batch_burn_in = None
     if args['burn_in_steps'] > 0:
+        batch_burn_in = map_r(batch, lambda v: v[:, :args['burn_in_steps']] if v.size(1) > 1 else v)
         batch = map_r(batch, lambda v: v[:, args['burn_in_steps']:] if v.size(1) > 1 else v)
-        outputs = map_r(outputs, lambda v: v[:, args['burn_in_steps']:])
+    outputs = forward_prediction(model, hidden, batch, args, batch_burn_in=batch_burn_in)
 
     actions = batch['action']
     emasks = batch['episode_mask']
