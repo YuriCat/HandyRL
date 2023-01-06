@@ -87,7 +87,7 @@ def make_batch(episodes, args):
         tmask = np.array([[[m['selected_prob'][player] is not None] for player in players] for m in moments], dtype=np.float32)
         omask = np.array([[[m['observation'][player] is not None] for player in players] for m in moments], dtype=np.float32)
 
-        progress = np.arange(ep['start'], ep['end'], dtype=np.float32)[..., np.newaxis] / ep['total']
+        progress = np.arange(ep['start'], ep['end'], dtype=np.float32)[..., np.newaxis]
 
         # pad each array if step length is short
         batch_steps = args['burn_in_steps'] + args['forward_steps']
@@ -104,7 +104,7 @@ def make_batch(episodes, args):
             tmask = np.pad(tmask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             omask = np.pad(omask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             amask = np.pad(amask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=1e32)
-            progress = np.pad(progress, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=1)
+            progress = np.pad(progress, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=1e32)
 
         obss.append(obs)
         datum.append((prob, v, act, oc, rew, ret, emask, tmask, omask, amask, progress))
@@ -210,7 +210,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
-    entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
+    entropy_loss = entropy.mul(args['entropy_regularization_decay'] ** batch['progress']).sum() * -args['entropy_regularization']
     losses['total'] = base_loss + entropy_loss
 
     return losses, dcnt
