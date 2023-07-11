@@ -199,7 +199,9 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     losses = {}
     dcnt = tmasks.sum().item()
 
-    losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).sum()
+    #losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).sum()
+    losses['p'] = -F.log_softmax(outputs['policy'], -1).mul(F.one_hot(batch['action'].squeeze(-1), outputs['policy'].size(-1)) - F.softmax(outputs['policy'].detach(), -1)).mul(total_advantages).mul(tmasks).sum()
+
     if 'value' in outputs:
         losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
