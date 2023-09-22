@@ -59,11 +59,13 @@ class SimpleConv2dModel(nn.Module):
         self.head_p = Head((filters, 3, 3), 2, 9)
         self.head_v = Head((filters, 3, 3), 1, 1)
 
-    def forward(self, x, hidden=None):
+    def forward(self, x, hidden=None, actions=None):
         h = F.relu(self.conv(x))
         for block in self.blocks:
             h = F.relu(block(h))
         h_p = self.head_p(h)
+        if actions is not None:
+            h_p = h_p.gather(-1, actions)
         h_v = self.head_v(h)
 
         return {'policy': h_p, 'value': torch.tanh(h_v)}
