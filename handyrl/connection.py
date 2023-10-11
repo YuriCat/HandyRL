@@ -205,6 +205,8 @@ class QueueCommunicator:
                 self.disconnect(conn)
             except BrokenPipeError:
                 self.disconnect(conn)
+            except TimeoutError:
+                pass
 
     def _recv_thread(self):
         while True:
@@ -218,4 +220,6 @@ class QueueCommunicator:
                 except EOFError:
                     self.disconnect(conn)
                     continue
+                except TimeoutError:
+                    pass
                 self.input_queue.put((conn, recv_data))
