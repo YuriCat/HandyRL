@@ -52,9 +52,9 @@ class Generator:
                 if player in turn_players:
                     p_ = outputs['policy']
                     legal_actions = self.env.legal_actions(player)
-                    action_mask = np.ones_like(p_) * 1e32
+                    action_mask = np.ones_like(p_)
                     action_mask[legal_actions] = 0
-                    p = softmax(p_ - action_mask)
+                    p = softmax(p_ - action_mask * 1e32)
                     action = random.choices(legal_actions, weights=p[legal_actions])[0]
 
                     moment['selected_prob'][player] = p[action]

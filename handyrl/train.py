@@ -70,7 +70,7 @@ def make_batch(episodes, args):
         obs = [[replace_none(m['observation'][player], obs_zeros) for player in players_] for m, players_ in zip(moments, players_list)]
         prob = np.array([[[replace_none(m['selected_prob'][player], 1.0)] for player in players_] for m, players_ in zip(moments, players_list)])
         act = np.array([[replace_none(m['action'][player], 0) for player in players_] for m, players_ in zip(moments, players_list)], dtype=np.int64)[..., np.newaxis]
-        amask = np.array([[replace_none(m['action_mask'][player], amask_zeros + 1e32) for player in players_] for m, players_ in zip(moments, players_list)])
+        amask = np.array([[replace_none(m['action_mask'][player], amask_zeros + 1) for player in players_] for m, players_ in zip(moments, players_list)])
 
         # reshape observation
         obs = rotate(rotate(obs))  # (T, P, ..., ...) -> (P, ..., T, ...) -> (..., T, P, ...)
@@ -102,7 +102,7 @@ def make_batch(episodes, args):
             emask = np.pad(emask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             tmask = np.pad(tmask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
             omask = np.pad(omask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=0)
-            amask = np.pad(amask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=1e32)
+            amask = np.pad(amask, [(pad_len_b, pad_len_a), (0, 0), (0, 0)], 'constant', constant_values=1)
             progress = np.pad(progress, [(pad_len_b, pad_len_a), (0, 0)], 'constant', constant_values=1)
 
         obss.append(obs)
@@ -178,7 +178,7 @@ def forward_prediction(model, hidden, batch, args):
             o = o.mul(batch['turn_mask'])
             if o.size(2) > 1 and batch_shape[2] == 1:  # turn-alternating batch
                 o = o.sum(2, keepdim=True)  # gather turn player's policies
-            outputs[k] = o - batch['action_mask']
+            outputs[k] = o - batch['action_mask'] * 1e32
         else:
             # mask valid target values and cumulative rewards
             outputs[k] = o.mul(batch['observation_mask'])
@@ -205,7 +205,8 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     if 'return' in outputs:
         losses['r'] = F.smooth_l1_loss(outputs['return'], targets['return'], reduction='none').mul(omasks).sum()
 
-    entropy = dist.Categorical(logits=outputs['policy']).entropy().mul(tmasks.sum(-1))
+    action_count = (1 - batch['action_mask']).sum(-1).float() + 1e-2
+    entropy = dist.Categorical(logits=outputs['policy']).entropy().div(torch.log(action_count) + 1e-8).mul(tmasks.sum(-1))
     losses['ent'] = entropy.sum()
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
