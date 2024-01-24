@@ -33,7 +33,7 @@ class RuleBasedAgent(RandomAgent):
             return random.choice(env.legal_actions(player))
 
 
-def print_outputs(env, prob, v):
+def print_outputs(env, prob, v, c):
     if hasattr(env, 'print_outputs'):
         env.print_outputs(prob, v)
     else:
@@ -41,6 +41,7 @@ def print_outputs(env, prob, v):
             print('v = %f' % v)
         if prob is not None:
             print('p = %s' % (prob * 1000).astype(int))
+    print('c = %f' % c)
 
 
 class Agent:
@@ -48,7 +49,7 @@ class Agent:
         # model might be a neural net, or some planning algorithm such as game tree search
         self.model = model
         self.hidden = None
-        self.temperature = temperature
+        self.temperature = 100 #temperature
         self.observation = observation
 
     def reset(self, env, show=False):
@@ -65,12 +66,13 @@ class Agent:
         actions = env.legal_actions(player)
         p = outputs['policy']
         v = outputs.get('value', None)
+        c = outputs.get('reliability', None)
         mask = np.ones_like(p)
         mask[actions] = 0
         p = p - mask * 1e32
 
         if show:
-            print_outputs(env, softmax(p), v)
+            print_outputs(env, softmax(p), v, c)
 
         if self.temperature == 0:
             ap_list = sorted([(a, p[a]) for a in actions], key=lambda x: -x[1])

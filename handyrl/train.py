@@ -199,7 +199,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
     losses = {}
     dcnt = tmasks.sum().item()
 
-    losses['p'] = (-log_selected_policies * total_advantages).mul(tmasks).sum()
+    losses['p'] = (-log_selected_policies * total_advantages).mul(outputs['reliability']).mul(tmasks).sum()
     if 'value' in outputs:
         losses['v'] = ((outputs['value'] - targets['value']) ** 2).mul(omasks).sum() / 2
     if 'return' in outputs:
@@ -210,6 +210,7 @@ def compose_losses(outputs, log_selected_policies, total_advantages, targets, ba
 
     base_loss = losses['p'] + losses.get('v', 0) + losses.get('r', 0)
     entropy_loss = entropy.mul(1 - batch['progress'] * (1 - args['entropy_regularization_decay'])).sum() * -args['entropy_regularization']
+    reliability_loss = -torch.log(outputs['reliability']).mul(tmasks).sum()
     losses['total'] = base_loss + entropy_loss
 
     return losses, dcnt

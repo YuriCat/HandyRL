@@ -58,6 +58,7 @@ class SimpleConv2dModel(nn.Module):
         self.blocks = nn.ModuleList([Conv(filters, filters, 3, bn=True) for _ in range(layers)])
         self.head_p = Head((filters, 3, 3), 2, 9)
         self.head_v = Head((filters, 3, 3), 1, 1)
+        self.head_c = Head((filters, 3, 3), 1, 1)
 
     def forward(self, x, hidden=None):
         h = F.relu(self.conv(x))
@@ -65,8 +66,9 @@ class SimpleConv2dModel(nn.Module):
             h = F.relu(block(h))
         h_p = self.head_p(h)
         h_v = self.head_v(h)
+        h_c = self.head_c(h)
 
-        return {'policy': h_p, 'value': torch.tanh(h_v)}
+        return {'policy': h_p, 'value': torch.tanh(h_v), 'reliability': torch.sigmoid(h_c)}
 
 
 class Environment(BaseEnvironment):
